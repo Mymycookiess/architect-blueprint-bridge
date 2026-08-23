@@ -1,0 +1,10 @@
+{
+  "customer_name": "CUSTOMER NAME",
+  "birth_date": "YYYY-MM-DD",
+  "birth_time": "HH:MM or null",
+  "birth_time_status": "KNOWN or UNKNOWN",
+  "birth_location": "City, State/Region, Country",
+  "latitude": null,
+  "longitude": null,
+  "timezone_offset": null
+}

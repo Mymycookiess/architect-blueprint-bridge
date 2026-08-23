@@ -1,0 +1,67 @@
+{
+  "pipeline_version": "architect_blueprint_pipeline_v1",
+  "content_library": "data/Architect_Detailed_Content_Library_v1.xlsx",
+  "library_sheet": "DETAILED CONTENT LIBRARY",
+  "report": {
+    "mode_full_word_min": 8500,
+    "mode_full_word_max": 11500,
+    "mode_partial_word_min": 6500,
+    "mode_partial_word_max": 9000,
+    "background_hex": "#FAF9F6",
+    "ink_hex": "#141414",
+    "page_size": "LETTER",
+    "mode_full_page_min": 30,
+    "mode_full_page_max": 45,
+    "mode_partial_page_min": 24,
+    "mode_partial_page_max": 36
+  },
+  "selection": {
+    "allowed_planets": [
+      "Sun",
+      "Moon",
+      "Mercury",
+      "Venus",
+      "Mars",
+      "Jupiter",
+      "Saturn"
+    ],
+    "allowed_aspects": [
+      "Conjunction",
+      "Sextile",
+      "Square",
+      "Trine",
+      "Opposition"
+    ],
+    "keep_audit_status": [
+      "KEEP"
+    ],
+    "safe_engine_actions": [
+      "KEEP_APPROVED",
+      "SYNTHESIZE"
+    ],
+    "dynamic_engine_actions": [
+      "SELECT_AND_SYNTHESIZE"
+    ]
+  },
+  "provider": {
+    "name": "AstrologyAPI",
+    "live_enabled": false,
+    "base_url_env": "ASTROLOGYAPI_BASE_URL",
+    "user_id_env": "ASTROLOGYAPI_USER_ID",
+    "api_key_env": "ASTROLOGYAPI_KEY"
+  },
+  "partial_stability": {
+    "sample_hours": [
+      0,
+      6,
+      12,
+      18
+    ],
+    "max_orb_range_deg": 1.5
+  },
+  "ai_writer": {
+    "mode": "deterministic",
+    "http_endpoint": "",
+    "token_env": "ARCHITECT_AI_TOKEN"
+  }
+}

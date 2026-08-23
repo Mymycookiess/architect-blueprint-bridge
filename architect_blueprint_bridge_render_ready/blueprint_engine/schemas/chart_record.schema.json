@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architect Chart Record V1",
+  "type": "object",
+  "required": [
+    "record_schema_version",
+    "record_id",
+    "calculation",
+    "availability",
+    "placements",
+    "lookup_keys"
+  ]
+}

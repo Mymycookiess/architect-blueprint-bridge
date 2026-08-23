@@ -1,0 +1,14 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architect Personalization Context V1",
+  "type": "object",
+  "required": [
+    "context_id",
+    "context_version",
+    "context_status",
+    "mode",
+    "chart_facts",
+    "sections",
+    "source_trace"
+  ]
+}

@@ -1,0 +1,13 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Blueprint Report Payload V1",
+  "type": "object",
+  "required": [
+    "report_id",
+    "schema_version",
+    "mode",
+    "customer",
+    "sections",
+    "qa"
+  ]
+}

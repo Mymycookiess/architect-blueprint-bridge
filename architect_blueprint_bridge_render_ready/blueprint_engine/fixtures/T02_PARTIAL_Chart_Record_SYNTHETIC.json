@@ -1,0 +1,127 @@
+{
+  "record_schema_version": "architect_chart_record_v1",
+  "record_id": "T02_PARTIAL_SYNTHETIC",
+  "record_status": "VALID_FOR_TEST",
+  "customer": {
+    "name": "Synthetic T02 Customer",
+    "birth_date": "1992-05-14",
+    "birth_time_local": null,
+    "birth_time_status": "UNKNOWN",
+    "birth_location_display": "Oakland, California, USA",
+    "latitude": 37.8044,
+    "longitude": -122.2712,
+    "timezone_offset": -7
+  },
+  "calculation": {
+    "mode": "PARTIAL",
+    "provider": "SYNTHETIC_FIXTURE",
+    "zodiac": "tropical",
+    "house_system": null,
+    "validation_status": "VALID"
+  },
+  "availability": {
+    "sun": true,
+    "moon": true,
+    "rising": false,
+    "houses": false,
+    "aspects": true,
+    "chart_wheel": false
+  },
+  "placements": {
+    "sun": {
+      "name": "Sun",
+      "sign": "Taurus",
+      "house": null,
+      "degree": 23.1,
+      "absolute_longitude": 53.1,
+      "retrograde": false
+    },
+    "moon": {
+      "name": "Moon",
+      "sign": "Libra",
+      "house": null,
+      "degree": 7.4,
+      "absolute_longitude": 187.4,
+      "retrograde": false
+    },
+    "mercury": {
+      "name": "Mercury",
+      "sign": "Taurus",
+      "house": null,
+      "degree": 12.8,
+      "absolute_longitude": 42.8,
+      "retrograde": false
+    },
+    "venus": {
+      "name": "Venus",
+      "sign": "Gemini",
+      "house": null,
+      "degree": 5.2,
+      "absolute_longitude": 65.2,
+      "retrograde": false
+    },
+    "mars": {
+      "name": "Mars",
+      "sign": "Aries",
+      "house": null,
+      "degree": 18.9,
+      "absolute_longitude": 18.9,
+      "retrograde": false
+    },
+    "jupiter": {
+      "name": "Jupiter",
+      "sign": "Virgo",
+      "house": null,
+      "degree": 9.7,
+      "absolute_longitude": 159.7,
+      "retrograde": false
+    },
+    "saturn": {
+      "name": "Saturn",
+      "sign": "Aquarius",
+      "house": null,
+      "degree": 14.6,
+      "absolute_longitude": 314.6,
+      "retrograde": true
+    }
+  },
+  "angles": {
+    "ascendant": {
+      "absolute_longitude": null,
+      "sign": null,
+      "degree": null
+    },
+    "midheaven": {
+      "absolute_longitude": null,
+      "sign": null,
+      "degree": null
+    }
+  },
+  "houses": [],
+  "aspects": [
+    {
+      "body_a": "Sun",
+      "body_b": "Mercury",
+      "type": "Conjunction",
+      "orb": 4.2,
+      "separation": 4.2
+    }
+  ],
+  "chart_wheel_reference": null,
+  "lookup_keys": [
+    "sun_taurus",
+    "moon_libra",
+    "planet_mercury_taurus",
+    "planet_venus_gemini",
+    "planet_mars_aries",
+    "planet_jupiter_virgo",
+    "planet_saturn_aquarius",
+    "aspect_sun_conjunction_mercury",
+    "mode_partial"
+  ],
+  "qa": {
+    "notes": [
+      "Synthetic PARTIAL fixture for mode-gating regression only. Astrology values are not a real customer calculation."
+    ]
+  }
+}
