@@ -17,7 +17,8 @@ from urllib.request import Request as URLRequest, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
-from pydantic import BaseModel
+from pydantic import BaseModel 
+from fastapi.responses import FileResponse
 
 APP_ROOT = Path(__file__).resolve().parent
 PACKAGE_ROOT = APP_ROOT.parent
@@ -398,3 +399,73 @@ async def orders_paid(
 
     # Important: return quickly so Shopify receives 2xx while processing continues.
     return {"accepted": True, "blueprint_items": len(items)}
+
+def verify_inspect_key(x_inspect_key: str | None) -> None:
+    expected = os.getenv("INSPECT_KEY", "")
+    if not expected or not hmac.compare_digest(x_inspect_key or "", expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.get("/runs/{run_id}/inspect")
+def inspect_run(
+    run_id: str,
+    x_inspect_key: str | None = Header(default=None),
+):
+    verify_inspect_key(x_inspect_key)
+
+    run_dir = BLUEPRINT_OUTPUT_ROOT / run_id
+    engine_dir = run_dir / "engine_output"
+
+    if not run_dir.exists():
+        raise HTTPException(status_code=404, detail="Run not found")
+
+    files = []
+    if engine_dir.exists():
+        files = sorted(
+            str(p.relative_to(run_dir))
+            for p in engine_dir.rglob("*")
+            if p.is_file()
+        )
+
+    manifest = None
+    qa = None
+
+    manifest_path = engine_dir / "00_manifest.json"
+    qa_path = engine_dir / "06_qa.json"
+
+    if manifest_path.exists():
+        manifest = json.loads(manifest_path.read_text())
+
+    if qa_path.exists():
+        qa = json.loads(qa_path.read_text())
+
+    return {
+        "run_id": run_id,
+        "files": files,
+        "manifest": manifest,
+        "qa": qa,
+    }
+
+
+@app.get("/runs/{run_id}/pdf")
+def get_run_pdf(
+    run_id: str,
+    x_inspect_key: str | None = Header(default=None),
+):
+    verify_inspect_key(x_inspect_key)
+
+    pdf_path = (
+        BLUEPRINT_OUTPUT_ROOT
+        / run_id
+        / "engine_output"
+        / "05_architect_blueprint.pdf"
+    )
+
+    if not pdf_path.exists():
+        raise HTTPException(status_code=404, detail="PDF not found")
+
+    return FileResponse(
+        pdf_path,
+        media_type="application/pdf",
+        filename="architect_blueprint.pdf",
+    )
