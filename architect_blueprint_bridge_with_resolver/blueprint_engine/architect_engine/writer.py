@@ -10,8 +10,8 @@ SECTION_ORDER = [
 "Your Blueprint Summary","Your Next Chapter / Continue"
 ]
 
-def _clean_source(text):
-    text=(text or "").replace("CUSTOMER NAME","")
+def _clean_source(text, customer=""):
+    text = (text or "").replace("@CUSTOMER NAME@", customer)
     # Strip common internal brackets/instructions defensively.
     text=re.sub(r"\[[^\]]+\]","",text)
     lines=[ln.strip() for ln in text.splitlines()]
@@ -46,6 +46,7 @@ def _fact_notes(context, section):
     return notes
 
 def compose_report(context: dict, report_id: str) -> dict:
+        customer = str(context.get("customer") or "").strip()
     sections=[]
     for sec in SECTION_ORDER:
         cfg=context["sections"].get(sec,{"status":"REVIEW_REQUIRED","source_blocks":[]})
@@ -55,14 +56,14 @@ def compose_report(context: dict, report_id: str) -> dict:
         blocks=cfg.get("source_blocks",[])
         body=[]
         for b in blocks:
-            cleaned=_clean_source(b.get("source_text",""))
+           cleaned = _clean_source(b.get("source_text",""), customer)
             if cleaned and cleaned not in body:
                 body.append(cleaned)
         notes=_fact_notes(context,sec)
         content="\n\n".join(body + notes)
         sections.append({
             "section_id":sec.lower().replace(" ","_").replace("/","_"),
-            "title":sec,
+            "title": "THE ARCHITECT BLUEPRINT" if sec == "Personalized Cover" else sec,
             "status":"INCLUDED" if content else "REVIEW_REQUIRED",
             "content":content,
             "evidence_refs":[b["source_content_id"] for b in blocks]
