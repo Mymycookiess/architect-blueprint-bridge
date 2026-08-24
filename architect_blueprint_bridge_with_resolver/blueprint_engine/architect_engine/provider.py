@@ -9,19 +9,26 @@ ALLOWED_ASPECTS={"Conjunction","Sextile","Square","Trine","Opposition"}
 ALLOWED_BODIES={"Sun","Moon","Mercury","Venus","Mars","Jupiter","Saturn"}
 
 def _post_json(url, payload, user_id, api_key):
-    body=json.dumps(payload).encode("utf-8")
-    auth=b64encode(f"{user_id}:{api_key}".encode()).decode()
-    req=Request(url,data=body,headers={"Content-Type":"application/json","Authorization":f"Basic {auth}"},method="POST")
+    body = json.dumps(payload).encode("utf-8")
+    req = Request(
+        url,
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "x-astrologyapi-key": api_key,
+        },
+        method="POST",
+    )
     with urlopen(req, timeout=40) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
+
 def _creds(config):
-    base=os.environ.get(config["provider"]["base_url_env"],"").rstrip("/")
-    uid=os.environ.get(config["provider"]["user_id_env"],"")
-    key=os.environ.get(config["provider"]["api_key_env"],"")
-    if not (base and uid and key):
+    base = os.environ.get(config["provider"]["base_url_env"], "").rstrip("/")
+    key = os.environ.get(config["provider"]["api_key_env"], "")
+    if not (base and key):
         raise RuntimeError("Live provider credentials not configured.")
-    return base,uid,key
+    return base, "", key
 
 def _base_payload(intake, hour, minute=0):
     year,month,day=map(int,intake["birth_date"].split("-"))
