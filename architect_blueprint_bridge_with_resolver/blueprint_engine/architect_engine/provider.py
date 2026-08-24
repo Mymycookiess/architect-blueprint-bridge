@@ -43,8 +43,8 @@ def fetch_full_bundle(intake: dict, config: dict) -> dict:
     hour,minute=map(int,intake["birth_time"].split(":"))
     payload=_base_payload(intake,hour,minute)
     planets=_post_json(base+"/v1/planets/tropical",payload,uid,key)
-    chart=_post_json(base+"/western_chart_data",payload,uid,key)
-    wheel=_post_json(base+"/natal_wheel_chart",payload,uid,key)
+    chart = _post_json(base+"/v1/western_chart_data", payload, uid, key)
+wheel = _post_json(base+"/v1/natal_wheel_chart", payload, uid, key)
     planets_list=planets if isinstance(planets,list) else planets.get("planets",planets.get("data",[]))
     return {
         "planets":planets_list,
