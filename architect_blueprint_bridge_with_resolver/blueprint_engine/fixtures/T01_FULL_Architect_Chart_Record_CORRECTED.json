@@ -1,0 +1,218 @@
+{
+  "record_schema_version": "architect_chart_record_v1",
+  "record_id": "T01_FULL_001_CORRECTED",
+  "test_case_id": "T01",
+  "record_status": "VALID_FOR_TEST",
+  "customer": {
+    "name": "Synthetic T01 Customer",
+    "birth_date": "1996-10-27",
+    "birth_time_local": "02:18",
+    "birth_time_status": "KNOWN",
+    "birth_location_display": "Oakland, California, USA",
+    "latitude": 37.8044,
+    "longitude": -122.2712,
+    "timezone_offset": -8
+  },
+  "calculation": {
+    "mode": "FULL",
+    "provider": "AstrologyAPI",
+    "zodiac": "tropical",
+    "house_system": "placidus",
+    "validation_status": "VALID"
+  },
+  "availability": {
+    "sun": true,
+    "moon": true,
+    "rising": true,
+    "houses": true,
+    "aspects": true,
+    "chart_wheel": true,
+    "mercury": true,
+    "venus": true,
+    "mars": true,
+    "jupiter": true,
+    "saturn": true
+  },
+  "placements": {
+    "sun": {
+      "sign": "Scorpio",
+      "house": 2,
+      "full_degree": 214.2766,
+      "norm_degree": 4.2766
+    },
+    "moon": {
+      "sign": "Taurus",
+      "house": 9,
+      "full_degree": 44.8561,
+      "norm_degree": 14.8561
+    },
+    "mercury": {
+      "sign": "Scorpio",
+      "house": 2,
+      "full_degree": 210.6478,
+      "norm_degree": 0.6478
+    },
+    "venus": {
+      "sign": "Virgo",
+      "house": 1,
+      "full_degree": 177.5047,
+      "norm_degree": 27.5047
+    },
+    "mars": {
+      "sign": "Leo",
+      "house": 12,
+      "full_degree": 148.3976,
+      "norm_degree": 28.3976
+    },
+    "jupiter": {
+      "sign": "Capricorn",
+      "house": 4,
+      "full_degree": 282.1044
+    },
+    "saturn": {
+      "sign": "Aries",
+      "house": 7,
+      "full_degree": 1.7732,
+      "retrograde": true
+    },
+    "uranus": {
+      "sign": "Aquarius",
+      "house": 5,
+      "full_degree": 300.7711
+    },
+    "neptune": {
+      "sign": "Capricorn",
+      "house": 5,
+      "full_degree": 295.0973
+    },
+    "pluto": {
+      "sign": "Sagittarius",
+      "house": 3,
+      "full_degree": 241.8976
+    }
+  },
+  "angles": {
+    "ascendant": {
+      "sign": "Virgo",
+      "degree": 12.32173,
+      "full_degree": 162.32173
+    },
+    "midheaven": {
+      "sign": "Gemini",
+      "full_degree": 69.92622
+    }
+  },
+  "houses": [
+    {
+      "house": 1,
+      "cusp_sign": "Virgo",
+      "start": 162.32173,
+      "end": 187.37089
+    },
+    {
+      "house": 2,
+      "cusp_sign": "Libra",
+      "start": 187.37089,
+      "end": 216.95145
+    },
+    {
+      "house": 3,
+      "cusp_sign": "Scorpio",
+      "start": 216.95145,
+      "end": 249.92622
+    },
+    {
+      "house": 4,
+      "cusp_sign": "Sagittarius",
+      "start": 249.92622,
+      "end": 283.45382
+    },
+    {
+      "house": 5,
+      "cusp_sign": "Capricorn",
+      "start": 283.45382,
+      "end": 314.64044
+    },
+    {
+      "house": 6,
+      "cusp_sign": "Aquarius",
+      "start": 314.64044,
+      "end": 342.32173
+    },
+    {
+      "house": 7,
+      "cusp_sign": "Pisces",
+      "start": 342.32173,
+      "end": 7.37089
+    },
+    {
+      "house": 8,
+      "cusp_sign": "Aries",
+      "start": 7.37089,
+      "end": 36.95145
+    },
+    {
+      "house": 9,
+      "cusp_sign": "Taurus",
+      "start": 36.95145,
+      "end": 69.92622
+    },
+    {
+      "house": 10,
+      "cusp_sign": "Gemini",
+      "start": 69.92622,
+      "end": 103.45382
+    },
+    {
+      "house": 11,
+      "cusp_sign": "Cancer",
+      "start": 103.45382,
+      "end": 134.64044
+    },
+    {
+      "house": 12,
+      "cusp_sign": "Leo",
+      "start": 134.64044,
+      "end": 162.32173
+    }
+  ],
+  "aspects": [
+    {
+      "aspect_id": "sun_conjunction_mercury",
+      "body_a": "Sun",
+      "body_b": "Mercury",
+      "type": "Conjunction",
+      "orb": 3.63,
+      "allowed_for_v1": true
+    },
+    {
+      "aspect_id": "sun_sextile_mars",
+      "body_a": "Sun",
+      "body_b": "Mars",
+      "type": "Sextile",
+      "orb": 5.88,
+      "allowed_for_v1": true
+    }
+  ],
+  "lookup_keys": [
+    "sun_scorpio",
+    "moon_taurus",
+    "rising_virgo",
+    "planet_mercury_scorpio",
+    "planet_venus_virgo",
+    "planet_mars_leo",
+    "planet_jupiter_capricorn",
+    "planet_saturn_aries",
+    "aspect_sun_conjunction_mercury",
+    "aspect_sun_sextile_mars",
+    "mode_full"
+  ],
+  "qa": {
+    "supersedes_stale_t01_files": true,
+    "corrected_birth_location_timezone": true,
+    "core_placements_verified": true,
+    "full_house_map_verified": true,
+    "core_aspects_verified": true,
+    "source_trace_verified": false
+  }
+}

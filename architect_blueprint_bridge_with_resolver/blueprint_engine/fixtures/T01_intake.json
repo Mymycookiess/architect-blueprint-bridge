@@ -1,0 +1,10 @@
+{
+  "customer_name": "Synthetic T01 Customer",
+  "birth_date": "1996-10-27",
+  "birth_time": "02:18",
+  "birth_time_status": "KNOWN",
+  "birth_location": "Oakland, California, USA",
+  "latitude": 37.8044,
+  "longitude": -122.2712,
+  "timezone_offset": -8
+}

@@ -1,0 +1,10 @@
+{
+  "customer_name": "Synthetic T02 Customer",
+  "birth_date": "1992-05-14",
+  "birth_time": null,
+  "birth_time_status": "UNKNOWN",
+  "birth_location": "Oakland, California, USA",
+  "latitude": 37.8044,
+  "longitude": -122.2712,
+  "timezone_offset": -7
+}

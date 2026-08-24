@@ -1,0 +1,55 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "title": "Architect Blueprint Intake",
+  "type": "object",
+  "required": [
+    "customer_name",
+    "birth_date",
+    "birth_location",
+    "birth_time_status"
+  ],
+  "properties": {
+    "customer_name": {
+      "type": "string",
+      "minLength": 1
+    },
+    "birth_date": {
+      "type": "string",
+      "pattern": "^\\d{4}-\\d{2}-\\d{2}$"
+    },
+    "birth_time": {
+      "type": [
+        "string",
+        "null"
+      ]
+    },
+    "birth_time_status": {
+      "enum": [
+        "KNOWN",
+        "UNKNOWN"
+      ]
+    },
+    "birth_location": {
+      "type": "string",
+      "minLength": 1
+    },
+    "latitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "longitude": {
+      "type": [
+        "number",
+        "null"
+      ]
+    },
+    "timezone_offset": {
+      "type": [
+        "number",
+        "null"
+      ]
+    }
+  }
+}

@@ -1,0 +1,400 @@
+
+from __future__ import annotations
+
+import base64
+import hashlib
+import hmac
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, time, timezone
+from pathlib import Path
+from typing import Any
+from urllib.parse import quote
+from urllib.request import Request as URLRequest, urlopen
+from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
+
+from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
+from pydantic import BaseModel
+
+APP_ROOT = Path(__file__).resolve().parent
+PACKAGE_ROOT = APP_ROOT.parent
+ENGINE_ROOT = PACKAGE_ROOT / "blueprint_engine"
+
+SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
+BLUEPRINT_OUTPUT_ROOT = Path(os.getenv("BLUEPRINT_OUTPUT_ROOT", str(PACKAGE_ROOT / "production_runs")))
+BLUEPRINT_PRODUCT_IDS = {
+    x.strip() for x in os.getenv("BLUEPRINT_PRODUCT_IDS", "").split(",") if x.strip()
+}
+BLUEPRINT_PRODUCT_HANDLES = {
+    x.strip().lower() for x in os.getenv("BLUEPRINT_PRODUCT_HANDLES", "").split(",") if x.strip()
+}
+
+# Optional resolver endpoint. It should accept JSON:
+# {"birth_location":"Oakland, California, USA","birth_date":"1996-10-27","birth_time":"02:18"}
+# and return {"latitude":37.8044,"longitude":-122.2712,"timezone_offset":-8}
+LOCATION_RESOLVER_URL = os.getenv("LOCATION_RESOLVER_URL", "")
+
+
+class LocationResolveRequest(BaseModel):
+    birth_location: str
+    birth_date: str
+    birth_time: str | None = None
+
+
+US_STATE_NAMES = {
+    "AL": "alabama", "AK": "alaska", "AZ": "arizona", "AR": "arkansas",
+    "CA": "california", "CO": "colorado", "CT": "connecticut", "DE": "delaware",
+    "FL": "florida", "GA": "georgia", "HI": "hawaii", "ID": "idaho",
+    "IL": "illinois", "IN": "indiana", "IA": "iowa", "KS": "kansas",
+    "KY": "kentucky", "LA": "louisiana", "ME": "maine", "MD": "maryland",
+    "MA": "massachusetts", "MI": "michigan", "MN": "minnesota",
+    "MS": "mississippi", "MO": "missouri", "MT": "montana", "NE": "nebraska",
+    "NV": "nevada", "NH": "new hampshire", "NJ": "new jersey",
+    "NM": "new mexico", "NY": "new york", "NC": "north carolina",
+    "ND": "north dakota", "OH": "ohio", "OK": "oklahoma", "OR": "oregon",
+    "PA": "pennsylvania", "RI": "rhode island", "SC": "south carolina",
+    "SD": "south dakota", "TN": "tennessee", "TX": "texas", "UT": "utah",
+    "VT": "vermont", "VA": "virginia", "WA": "washington",
+    "WV": "west virginia", "WI": "wisconsin", "WY": "wyoming", "DC": "district of columbia",
+}
+
+
+def _normalize_tokens(value: str) -> set[str]:
+    clean = re.sub(r"[^a-z0-9 ]+", " ", value.lower())
+    tokens = {t for t in clean.split() if t}
+    for token in list(tokens):
+        upper = token.upper()
+        if upper in US_STATE_NAMES:
+            tokens.update(US_STATE_NAMES[upper].split())
+    return tokens
+
+
+def _geocode_birth_location(location: str) -> dict:
+    # Open-Meteo geocoding is keyless. Search the locality name, then score
+    # returned candidates against the full customer-entered location.
+    locality = location.split(",", 1)[0].strip() or location.strip()
+    url = (
+        "https://geocoding-api.open-meteo.com/v1/search"
+        f"?name={quote(locality)}&count=10&language=en&format=json"
+    )
+    req = URLRequest(url, headers={"User-Agent": "ArchitectBlueprintBridge/1.0"})
+    with urlopen(req, timeout=20) as resp:
+        payload = json.loads(resp.read().decode("utf-8"))
+
+    results = payload.get("results") or []
+    if not results:
+        raise HTTPException(422, f"Birth location could not be resolved: {location}")
+
+    wanted = _normalize_tokens(location)
+
+    def score(item: dict) -> tuple[int, int]:
+        text = " ".join(str(item.get(k) or "") for k in (
+            "name", "admin1", "admin2", "admin3", "country", "country_code"
+        ))
+        got = _normalize_tokens(text)
+        overlap = len(wanted & got)
+        exact_name = int(str(item.get("name") or "").strip().lower() == locality.lower())
+        return (exact_name * 100 + overlap, int(item.get("population") or 0))
+
+    best = max(results, key=score)
+    if best.get("latitude") is None or best.get("longitude") is None or not best.get("timezone"):
+        raise HTTPException(422, "Resolved location is missing coordinates or timezone.")
+    return best
+
+
+def _historical_utc_offset_hours(tz_name: str, birth_date: str, birth_time: str | None) -> float:
+    try:
+        date_obj = datetime.strptime(birth_date, "%Y-%m-%d").date()
+    except ValueError as exc:
+        raise HTTPException(422, "birth_date must use YYYY-MM-DD.") from exc
+
+    if birth_time:
+        try:
+            time_obj = datetime.strptime(birth_time, "%H:%M").time()
+        except ValueError as exc:
+            raise HTTPException(422, "birth_time must use 24-hour HH:MM.") from exc
+    else:
+        # PARTIAL/unknown-time mode: noon avoids guessing a birth clock time while
+        # giving a deterministic timezone offset for the date.
+        time_obj = time(12, 0)
+
+    try:
+        tz = ZoneInfo(tz_name)
+    except ZoneInfoNotFoundError as exc:
+        raise HTTPException(422, f"Timezone database could not resolve {tz_name}.") from exc
+
+    naive = datetime.combine(date_obj, time_obj)
+    aware0 = naive.replace(tzinfo=tz, fold=0)
+    aware1 = naive.replace(tzinfo=tz, fold=1)
+    off0 = aware0.utcoffset()
+    off1 = aware1.utcoffset()
+
+    if off0 is None:
+        raise HTTPException(422, "Could not determine UTC offset.")
+
+    # For a known birth time, refuse to guess during the repeated fall-back hour.
+    if birth_time and off1 is not None and off0 != off1:
+        raise HTTPException(422, "Birth time is ambiguous because of a daylight-saving transition; manual review is required.")
+
+    # Detect nonexistent spring-forward local times by UTC round-trip.
+    if birth_time:
+        roundtrip = aware0.astimezone(timezone.utc).astimezone(tz).replace(tzinfo=None)
+        if roundtrip != naive:
+            raise HTTPException(422, "Birth time does not exist locally because of a daylight-saving transition; manual review is required.")
+
+    return off0.total_seconds() / 3600
+
+
+app = FastAPI(title="Architect Blueprint Shopify Bridge", version="1.1.0")
+
+
+@app.get("/")
+def root():
+    return {"ok": True, "service": "architect-blueprint-shopify-bridge"}
+
+
+@app.post("/resolve-location")
+def resolve_location_endpoint(payload: LocationResolveRequest):
+    location = payload.birth_location.strip()
+    if not location:
+        raise HTTPException(422, "birth_location is required.")
+
+    place = _geocode_birth_location(location)
+    offset = _historical_utc_offset_hours(
+        str(place["timezone"]), payload.birth_date, payload.birth_time
+    )
+    return {
+        "latitude": float(place["latitude"]),
+        "longitude": float(place["longitude"]),
+        "timezone_offset": offset,
+        "timezone": place["timezone"],
+        "resolved_name": place.get("name"),
+        "resolved_admin1": place.get("admin1"),
+        "resolved_country": place.get("country"),
+    }
+
+
+def verify_shopify_hmac(raw_body: bytes, supplied: str | None) -> None:
+    if not SHOPIFY_WEBHOOK_SECRET:
+        raise HTTPException(500, "SHOPIFY_WEBHOOK_SECRET is not configured.")
+    digest = hmac.new(
+        SHOPIFY_WEBHOOK_SECRET.encode("utf-8"), raw_body, hashlib.sha256
+    ).digest()
+    expected = base64.b64encode(digest).decode("utf-8")
+    if not supplied or not hmac.compare_digest(expected, supplied):
+        raise HTTPException(401, "Invalid Shopify webhook signature.")
+
+
+def safe_slug(value: str) -> str:
+    value = re.sub(r"[^A-Za-z0-9._-]+", "_", value).strip("_")
+    return value[:100] or "order"
+
+
+def props_to_dict(properties: Any) -> dict[str, str]:
+    out: dict[str, str] = {}
+    for p in properties or []:
+        if isinstance(p, dict):
+            key = p.get("name") or p.get("key")
+            value = p.get("value")
+            if key:
+                out[str(key)] = "" if value is None else str(value)
+    return out
+
+
+def is_blueprint_line_item(item: dict) -> bool:
+    props = props_to_dict(item.get("properties"))
+    if props.get("_Architect Product", "").lower() == "true":
+        return True
+
+    product_id = str(item.get("product_id") or "")
+    if BLUEPRINT_PRODUCT_IDS and product_id in BLUEPRINT_PRODUCT_IDS:
+        return True
+
+    handle = str(item.get("handle") or item.get("product_handle") or "").lower()
+    if BLUEPRINT_PRODUCT_HANDLES and handle in BLUEPRINT_PRODUCT_HANDLES:
+        return True
+
+    return False
+
+
+def extract_intake(order: dict, item: dict) -> dict:
+    props = props_to_dict(item.get("properties"))
+    status = props.get("Birth Time Status", "").strip().upper()
+    birth_time = props.get("Birth Time", "").strip() or None
+
+    errors = []
+    if not props.get("Blueprint Full Name"):
+        errors.append("Missing Blueprint Full Name")
+    if not props.get("Birth Date"):
+        errors.append("Missing Birth Date")
+    if status not in {"KNOWN", "UNKNOWN"}:
+        errors.append("Birth Time Status must be KNOWN or UNKNOWN")
+    if status == "KNOWN" and not birth_time:
+        errors.append("Known birth time requires Birth Time")
+    if not props.get("Birth Location"):
+        errors.append("Missing Birth Location")
+    if props.get("Birth Details Confirmed") != "YES":
+        errors.append("Birth Details Confirmed is missing")
+
+    if errors:
+        raise ValueError("; ".join(errors))
+
+    return {
+        "customer_name": props["Blueprint Full Name"].strip(),
+        "birth_date": props["Birth Date"].strip(),
+        "birth_time": birth_time if status == "KNOWN" else None,
+        "birth_time_status": status,
+        "birth_location": props["Birth Location"].strip(),
+        "latitude": None,
+        "longitude": None,
+        "timezone_offset": None,
+        "_shopify": {
+            "order_id": order.get("id"),
+            "order_name": order.get("name"),
+            "email": order.get("email"),
+            "line_item_id": item.get("id"),
+            "product_id": item.get("product_id"),
+            "variant_id": item.get("variant_id"),
+        }
+    }
+
+
+def resolve_location(intake: dict) -> dict:
+    """Optional external resolver hook.
+
+    The Blueprint Engine requires coordinates and UTC offset for live astrology
+    calculations. This bridge intentionally does not guess them.
+
+    If LOCATION_RESOLVER_URL is blank, the run is parked in WAITING_FOR_LOCATION_RESOLUTION.
+    """
+    if not LOCATION_RESOLVER_URL:
+        return intake
+
+    from urllib.request import Request, urlopen
+
+    body = json.dumps({
+        "birth_location": intake["birth_location"],
+        "birth_date": intake["birth_date"],
+        "birth_time": intake.get("birth_time"),
+    }).encode("utf-8")
+
+    req = Request(
+        LOCATION_RESOLVER_URL,
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urlopen(req, timeout=30) as resp:
+        resolved = json.loads(resp.read().decode("utf-8"))
+
+    intake["latitude"] = resolved.get("latitude")
+    intake["longitude"] = resolved.get("longitude")
+    intake["timezone_offset"] = resolved.get("timezone_offset")
+    return intake
+
+
+def write_status(run_dir: Path, status: str, detail: str = "") -> None:
+    payload = {
+        "status": status,
+        "detail": detail,
+        "updated_at": datetime.utcnow().isoformat() + "Z"
+    }
+    (run_dir / "frontdoor_status.json").write_text(json.dumps(payload, indent=2))
+    print(f"BLUEPRINT_STATUS run={run_dir.name} status={status} detail={detail}", flush=True)
+
+
+def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
+    order_key = safe_slug(str(order.get("name") or order.get("id") or webhook_id))
+    line_key = safe_slug(str(item.get("id") or item.get("variant_id") or "item"))
+    run_dir = BLUEPRINT_OUTPUT_ROOT / f"{order_key}_{line_key}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+
+    if (run_dir / "frontdoor_completed.flag").exists():
+        return
+
+    try:
+        intake = extract_intake(order, item)
+        intake = resolve_location(intake)
+        (run_dir / "shopify_order_snapshot.json").write_text(json.dumps(order, indent=2))
+        (run_dir / "customer_intake.json").write_text(json.dumps(intake, indent=2))
+
+        if (
+            intake.get("latitude") is None
+            or intake.get("longitude") is None
+            or intake.get("timezone_offset") is None
+        ):
+            write_status(
+                run_dir,
+                "WAITING_FOR_LOCATION_RESOLUTION",
+                "Birth location was captured, but latitude/longitude/timezone are not resolved yet."
+            )
+            return
+
+        write_status(run_dir, "RUNNING_BLUEPRINT_ENGINE")
+
+        cmd = [
+            sys.executable,
+            str(ENGINE_ROOT / "pipeline.py"),
+            "--intake", str(run_dir / "customer_intake.json"),
+            "--live-provider",
+            "--out-dir", str(run_dir / "engine_output"),
+        ]
+        completed = subprocess.run(cmd, cwd=str(ENGINE_ROOT), capture_output=True, text=True, timeout=600)
+
+        (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
+        (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
+
+        if completed.returncode != 0:
+            write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
+            return
+
+        manifest_path = run_dir / "engine_output" / "00_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+        if manifest.get("status") == "PASS":
+            write_status(run_dir, "BLUEPRINT_READY")
+            (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
+        else:
+            write_status(run_dir, "REVIEW_REQUIRED", "Engine completed but final manifest did not PASS.")
+
+    except Exception as exc:
+        write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
+
+
+@app.get("/health")
+def health():
+    return {
+        "ok": True,
+        "service": "architect-blueprint-shopify-bridge",
+        "engine_present": (ENGINE_ROOT / "pipeline.py").exists(),
+    }
+
+
+@app.post("/webhooks/shopify/orders-paid")
+async def orders_paid(
+    request: Request,
+    background_tasks: BackgroundTasks,
+    x_shopify_hmac_sha256: str | None = Header(default=None),
+    x_shopify_webhook_id: str | None = Header(default=None),
+):
+    raw = await request.body()
+    verify_shopify_hmac(raw, x_shopify_hmac_sha256)
+
+    try:
+        order = json.loads(raw.decode("utf-8"))
+    except Exception:
+        raise HTTPException(400, "Invalid JSON payload.")
+
+    webhook_id = x_shopify_webhook_id or str(order.get("id") or "unknown")
+    items = [item for item in order.get("line_items", []) if is_blueprint_line_item(item)]
+
+    if not items:
+        return {"accepted": True, "blueprint_items": 0, "message": "Paid order contained no Blueprint product."}
+
+    for item in items:
+        background_tasks.add_task(run_blueprint, order, item, webhook_id)
+
+    # Important: return quickly so Shopify receives 2xx while processing continues.
+    return {"accepted": True, "blueprint_items": len(items)}
