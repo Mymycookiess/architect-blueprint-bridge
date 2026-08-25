@@ -377,7 +377,7 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             cwd=str(ENGINE_ROOT),
             capture_output=True,
             text=True,
-            timeout=600,
+            timeout=3600,
         )
 
         (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
@@ -517,9 +517,46 @@ class AIWriterRequest(BaseModel):
     contract: str
     report_id: str
     personalization_context: dict
+    section_name: str | None = None
+    section_word_target: int | None = None
 
 
 AIWriterRequest.model_rebuild()
+
+
+def _call_openai(openai_payload: dict, output_kind: str) -> dict:
+    body = json.dumps(openai_payload).encode("utf-8")
+    req = URLRequest(
+        "https://api.openai.com/v1/responses",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc}")
+    output_text = result.get("output_text")
+    if not output_text:
+        for item in result.get("output", []):
+            if item.get("type") != "message":
+                continue
+            for content_item in item.get("content", []):
+                if content_item.get("type") == "output_text":
+                    output_text = content_item.get("text")
+                    break
+            if output_text:
+                break
+    if not output_text:
+        raise HTTPException(status_code=502, detail=f"OpenAI returned no {output_kind} text.")
+    try:
+        return json.loads(output_text)
+    except json.JSONDecodeError:
+        raise HTTPException(status_code=502, detail=f"OpenAI returned invalid {output_kind} JSON.")
 
 
 
@@ -553,6 +590,70 @@ def ai_writer(
     context = payload.personalization_context
 
     sections = context.get("sections", {})
+
+    if payload.section_name:
+        section_name = payload.section_name
+        section_data = sections.get(section_name)
+        if not isinstance(section_data, dict):
+            raise HTTPException(status_code=422, detail="Unknown Blueprint section.")
+        allowed_section_refs = [
+            str(block.get("source_content_id"))
+            for block in section_data.get("source_blocks", [])
+            if block.get("source_content_id")
+        ]
+        target = max(80, min(int(payload.section_word_target or 500), 1200))
+        section_schema = {
+            "type": "object",
+            "properties": {
+                "section_id": {"type": "string"},
+                "title": {"type": "string"},
+                "status": {"type": "string"},
+                "content": {"type": "string"},
+                "evidence_refs": {"type": "array", "items": {"type": "string"}},
+            },
+            "required": ["section_id", "title", "status", "content", "evidence_refs"],
+            "additionalProperties": False,
+        }
+        section_payload = {
+            "model": OPENAI_MODEL,
+            "max_output_tokens": 5000,
+            "instructions": f"""
+{payload.contract}
+Write only the Blueprint section named: {section_name}
+Target approximately {target} words and stay within 15 percent of that target.
+Use only this section's supplied data and the verified chart facts in the input.
+Do not use outside astrology knowledge or invent facts. Develop polished,
+substantive prose through grounded explanation, integration, reflection,
+practical application, and examples faithful to the supplied context.
+Avoid repetitive filler and generic horoscope language.
+For Personalized Action Plan include exactly 3 strengths, 3 supporting habits,
+3 patterns to watch, 1 challenge, 1 encouraging message, and 1 Next Brick.
+Return one section object. Use only allowed_evidence_refs in evidence_refs.
+""",
+            "input": json.dumps({
+                "report_id": payload.report_id,
+                "section_name": section_name,
+                "section_context": section_data,
+                "chart_facts": context.get("chart_facts", {}),
+                "customer": context.get("customer", ""),
+                "mode": context.get("mode", ""),
+                "allowed_evidence_refs": allowed_section_refs,
+            }),
+            "text": {"format": {
+                "type": "json_schema", "name": "architect_blueprint_section",
+                "strict": True, "schema": section_schema,
+            }},
+            "store": False,
+        }
+        section = _call_openai(section_payload, "section")
+        section["title"] = section_name
+        section["section_id"] = section_name.lower().replace(" ", "_").replace("/", "_")
+        if not set(section.get("evidence_refs", [])).issubset(set(allowed_section_refs)):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Source-boundary violation in section: {section_name}",
+            )
+        return section
 
     mode = str(context.get("mode") or "FULL").upper()
     if mode == "PARTIAL":
@@ -797,15 +898,3 @@ Return only the requested structured report object.
             raise HTTPException(
                 status_code=422,
                 detail=f"Source-boundary violation in section: {title}",
-            )
-
-    report["report_id"] = payload.report_id
-    report["context_version"] = context.get("context_version", "")
-    report["mode"] = context.get("mode", "")
-    report["customer"] = context.get("customer", "")
-    report["qa"] = {
-        "source_boundary": "LOCKED_TO_CONTEXT",
-        "new_astrology_added": False,
-    }
-
-    return report
