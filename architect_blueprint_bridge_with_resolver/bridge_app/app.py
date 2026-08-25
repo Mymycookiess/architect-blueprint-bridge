@@ -527,6 +527,7 @@ AIWriterRequest.model_rebuild()
 def ai_writer(
     payload: AIWriterRequest,
     authorization: str | None = Header(default=None),
+    x_architect_token: str | None = Header(default=None),
 ):
     expected = ARCHITECT_AI_TOKEN
 
@@ -536,7 +537,7 @@ def ai_writer(
             detail="ARCHITECT_AI_TOKEN is not configured.",
         )
 
-    supplied = ""
+    supplied = x_architect_token or ""
     if authorization and authorization.startswith("Bearer "):
         supplied = authorization[7:]
 
