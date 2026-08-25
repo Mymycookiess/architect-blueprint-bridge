@@ -347,42 +347,46 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             "--intake", str(run_dir / "customer_intake.json"),
             "--live-provider",
             "--out-dir", str(run_dir / "engine_output"),
-        ]
-       if BLUEPRINT_WRITER == "ai-http":
-        if not ARCHITECT_AI_ENDPOINT:
-            write_status(
-                run_dir,
-                "FRONTDOOR_ERROR",
-                "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured."
+        ]          
+            if BLUEPRINT_WRITER == "ai-http":
+                if not ARCHITECT_AI_ENDPOINT:
+                    write_status(
+                        run_dir,
+                        "FRONTDOOR_ERROR",
+                        "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
+                    )
+                    return
+
+                cmd.extend([
+                    "--writer", "ai-http",
+                    "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
+                ])
+
+            completed = subprocess.run(
+                cmd,
+                cwd=str(ENGINE_ROOT),
+                capture_output=True,
+                text=True,
+                timeout=600
             )
-            return
-    
-        cmd.extend([
-            "--writer", "ai-http",
-            "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
-        ])
+            (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
+            (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
-completed = subprocess.run(
-    cmd,
-    cwd=str(ENGINE_ROOT),
-    capture_output=True,
-    text=True,
-    timeout=600
-)
-        (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
-        (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
+            if completed.returncode != 0:
+                write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
+                return
 
-        if completed.returncode != 0:
-            write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
-            return
-
-        manifest_path = run_dir / "engine_output" / "00_manifest.json"
-        manifest = json.loads(manifest_path.read_text())
-        if manifest.get("status") == "PASS":
-            write_status(run_dir, "BLUEPRINT_READY")
-            (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
-        else:
-            write_status(run_dir, "REVIEW_REQUIRED", "Engine completed but final manifest did not PASS.")
+            manifest_path = run_dir / "engine_output" / "00_manifest.json"
+            manifest = json.loads(manifest_path.read_text())
+            if manifest.get("status") == "PASS":
+                write_status(run_dir, "BLUEPRINT_READY")
+                (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
+            else:
+                write_status(
+                    run_dir,
+                    "REVIEW_REQUIRED",
+                    "Engine completed but final manifest did not PASS.",
+                )
 
     except Exception as exc:
         write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
