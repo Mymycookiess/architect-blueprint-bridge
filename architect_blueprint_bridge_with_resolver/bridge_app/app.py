@@ -39,6 +39,9 @@ BLUEPRINT_PRODUCT_HANDLES = {
 LOCATION_RESOLVER_URL = os.getenv("LOCATION_RESOLVER_URL", "")
 BLUEPRINT_WRITER = os.getenv("BLUEPRINT_WRITER", "deterministic")
 ARCHITECT_AI_ENDPOINT = os.getenv("ARCHITECT_AI_ENDPOINT", "")
+ARCHITECT_AI_TOKEN = os.getenv("ARCHITECT_AI_TOKEN", "")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
+OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
 
 
 class LocationResolveRequest(BaseModel):
@@ -490,3 +493,254 @@ def get_run_pdf(
         media_type="application/pdf",
         filename="architect_blueprint.pdf",
     )
+    class AIWriterRequest(BaseModel):
+    contract: str
+    report_id: str
+    personalization_context: dict
+
+
+@app.post("/ai-writer")
+def ai_writer(
+    payload: AIWriterRequest,
+    authorization: str | None = Header(default=None),
+):
+    expected = ARCHITECT_AI_TOKEN
+
+    if not expected:
+        raise HTTPException(
+            status_code=500,
+            detail="ARCHITECT_AI_TOKEN is not configured.",
+        )
+
+    supplied = ""
+    if authorization and authorization.startswith("Bearer "):
+        supplied = authorization[7:]
+
+    if not hmac.compare_digest(supplied, expected):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not OPENAI_API_KEY:
+        raise HTTPException(
+            status_code=500,
+            detail="OPENAI_API_KEY is not configured.",
+        )
+
+    context = payload.personalization_context
+
+    sections = context.get("sections", {})
+
+    allowed_refs = {}
+    for section_name, section_data in sections.items():
+        allowed_refs[section_name] = [
+            str(block.get("source_content_id"))
+            for block in section_data.get("source_blocks", [])
+            if block.get("source_content_id")
+        ]
+
+    instructions = f"""
+{payload.contract}
+
+You are producing THE ARCHITECT BLUEPRINT.
+
+Use ONLY the supplied personalization_context.
+
+Do not use outside astrology knowledge.
+Do not invent placements, houses, aspects, traits, events, diagnoses,
+predictions, destiny claims, or guaranteed outcomes.
+
+Every statement must be grounded in the supplied context.
+
+For each section:
+- preserve the supplied section purpose
+- personalize the writing using only selected source blocks and chart facts
+- use only evidence_refs that belong to that section
+- never cite a source_content_id from another section
+
+The Personalized Action Plan must contain exactly:
+- 3 strengths
+- 3 supporting habits
+- 3 patterns to watch
+- 1 challenge
+- 1 encouraging message
+- 1 Next Brick
+
+The writing should feel reflective, premium, calm, specific, and useful.
+Avoid repetitive filler and generic horoscope language.
+
+Return only the requested structured report object.
+"""
+
+    report_schema = {
+        "type": "object",
+        "properties": {
+            "report_id": {
+                "type": "string"
+            },
+            "schema_version": {
+                "type": "string"
+            },
+            "context_version": {
+                "type": "string"
+            },
+            "mode": {
+                "type": "string"
+            },
+            "customer": {
+                "type": "string"
+            },
+            "sections": {
+                "type": "array",
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "section_id": {
+                            "type": "string"
+                        },
+                        "title": {
+                            "type": "string"
+                        },
+                        "status": {
+                            "type": "string"
+                        },
+                        "content": {
+                            "type": "string"
+                        },
+                        "evidence_refs": {
+                            "type": "array",
+                            "items": {
+                                "type": "string"
+                            }
+                        }
+                    },
+                    "required": [
+                        "section_id",
+                        "title",
+                        "status",
+                        "content",
+                        "evidence_refs"
+                    ],
+                    "additionalProperties": False
+                }
+            },
+            "qa": {
+                "type": "object",
+                "properties": {
+                    "source_boundary": {
+                        "type": "string"
+                    },
+                    "new_astrology_added": {
+                        "type": "boolean"
+                    }
+                },
+                "required": [
+                    "source_boundary",
+                    "new_astrology_added"
+                ],
+                "additionalProperties": False
+            }
+        },
+        "required": [
+            "report_id",
+            "schema_version",
+            "context_version",
+            "mode",
+            "customer",
+            "sections",
+            "qa"
+        ],
+        "additionalProperties": False
+    }
+
+    openai_payload = {
+        "model": OPENAI_MODEL,
+        "instructions": instructions,
+        "input": json.dumps(
+            {
+                "report_id": payload.report_id,
+                "personalization_context": context,
+                "allowed_evidence_refs": allowed_refs,
+            }
+        ),
+        "text": {
+            "format": {
+                "type": "json_schema",
+                "name": "architect_blueprint_report",
+                "strict": True,
+                "schema": report_schema,
+            }
+        },
+        "store": False,
+    }
+
+    body = json.dumps(openai_payload).encode("utf-8")
+
+    req = URLRequest(
+        "https://api.openai.com/v1/responses",
+        data=body,
+        headers={
+            "Content-Type": "application/json",
+            "Authorization": f"Bearer {OPENAI_API_KEY}",
+        },
+        method="POST",
+    )
+
+    try:
+        with urlopen(req, timeout=300) as resp:
+            result = json.loads(resp.read().decode("utf-8"))
+    except Exception as exc:
+        raise HTTPException(
+            status_code=502,
+            detail=f"OpenAI request failed: {exc}",
+        )
+
+    output_text = result.get("output_text")
+
+    if not output_text:
+        for item in result.get("output", []):
+            if item.get("type") != "message":
+                continue
+
+            for content_item in item.get("content", []):
+                if content_item.get("type") == "output_text":
+                    output_text = content_item.get("text")
+                    break
+
+            if output_text:
+                break
+
+    if not output_text:
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAI returned no report text.",
+        )
+
+    try:
+        report = json.loads(output_text)
+    except json.JSONDecodeError:
+        raise HTTPException(
+            status_code=502,
+            detail="OpenAI returned invalid report JSON.",
+        )
+
+    for section in report.get("sections", []):
+        title = section.get("title", "")
+        refs = section.get("evidence_refs", [])
+
+        permitted = set(allowed_refs.get(title, []))
+
+        if not set(refs).issubset(permitted):
+            raise HTTPException(
+                status_code=422,
+                detail=f"Source-boundary violation in section: {title}",
+            )
+
+    report["report_id"] = payload.report_id
+    report["context_version"] = context.get("context_version", "")
+    report["mode"] = context.get("mode", "")
+    report["customer"] = context.get("customer", "")
+    report["qa"] = {
+        "source_boundary": "LOCKED_TO_CONTEXT",
+        "new_astrology_added": False,
+    }
+
+    return report
