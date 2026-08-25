@@ -519,6 +519,7 @@ class AIWriterRequest(BaseModel):
     personalization_context: dict
     section_name: str | None = None
     section_word_target: int | None = None
+    section_draft: dict | None = None
 
 
 AIWriterRequest.model_rebuild()
@@ -614,6 +615,13 @@ def ai_writer(
             "required": ["section_id", "title", "status", "content", "evidence_refs"],
             "additionalProperties": False,
         }
+        revision_instruction = ""
+        if payload.section_draft:
+            revision_instruction = f"""
+Revise and expand the supplied existing_section into a complete replacement.
+Preserve its grounded ideas, remove repetition, and reach the requested word
+target. Return the entire revised section, not an addendum.
+"""
         section_payload = {
             "model": OPENAI_MODEL,
             "max_output_tokens": 5000,
@@ -621,6 +629,7 @@ def ai_writer(
 {payload.contract}
 Write only the Blueprint section named: {section_name}
 Target approximately {target} words and stay within 15 percent of that target.
+{revision_instruction}
 Use only this section's supplied data and the verified chart facts in the input.
 Do not use outside astrology knowledge or invent facts. Develop polished,
 substantive prose through grounded explanation, integration, reflection,
@@ -638,6 +647,7 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
                 "customer": context.get("customer", ""),
                 "mode": context.get("mode", ""),
                 "allowed_evidence_refs": allowed_section_refs,
+                "existing_section": payload.section_draft,
             }),
             "text": {"format": {
                 "type": "json_schema", "name": "architect_blueprint_section",
