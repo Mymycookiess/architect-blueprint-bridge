@@ -16,6 +16,7 @@ def run_qa(chart, selector, context, report, config, rendered_pages=None):
     r=config["report"]
     lo=r["mode_full_word_min"] if mode=="FULL" else r["mode_partial_word_min"]
     hi=r["mode_full_word_max"] if mode=="FULL" else r["mode_partial_word_max"]
+    hi += 100
     plo=r["mode_full_page_min"] if mode=="FULL" else r["mode_partial_page_min"]
     phi=r["mode_full_page_max"] if mode=="FULL" else r["mode_partial_page_max"]
     all_text="\n".join(s.get("content","") for s in report["sections"])
