@@ -513,13 +513,13 @@ def get_run_pdf(
         media_type="application/pdf",
         filename="architect_blueprint.pdf",
     )
-   class AIWriterRequest(BaseModel):
-    contract: str
-    report_id: str
-    personalization_context: dict
+class AIWriterRequest(BaseModel):
+contract: str
+report_id: str
+personalization_context: dict
 
 
-   AIWriterRequest.model_rebuild()
+AIWriterRequest.model_rebuild()
 
 
 
