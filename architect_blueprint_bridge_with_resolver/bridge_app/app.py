@@ -706,9 +706,9 @@ For a FULL report, use these approximate section word budgets:
 - Welcome to Your Blueprint: 350
 - Birth Chart Snapshot: 550
 - Your Story Begins Here: 450
-- Your Core Identity — Sun: 650
-- Your Emotional World — Moon: 650
-- How the World Meets You — Rising: 550
+- Your Core Identity â Sun: 650
+- Your Emotional World â Moon: 650
+- How the World Meets You â Rising: 550
 - Your Big Three: 650
 - Your Houses / Life Areas: 900
 - Your Inner Wiring: 650
@@ -898,3 +898,15 @@ Return only the requested structured report object.
             raise HTTPException(
                 status_code=422,
                 detail=f"Source-boundary violation in section: {title}",
+            )
+
+    report["report_id"] = payload.report_id
+    report["context_version"] = context.get("context_version", "")
+    report["mode"] = context.get("mode", "")
+    report["customer"] = context.get("customer", "")
+    report["qa"] = {
+        "source_boundary": "LOCKED_TO_CONTEXT",
+        "new_astrology_added": False,
+    }
+
+    return report
