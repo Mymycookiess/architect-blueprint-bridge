@@ -518,7 +518,6 @@ def get_run_pdf(
     report_id: str
     personalization_context: dict
 
-
 @app.post("/ai-writer")
 def ai_writer(
     payload: AIWriterRequest,
