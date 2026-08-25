@@ -514,9 +514,9 @@ def get_run_pdf(
         filename="architect_blueprint.pdf",
     )
 class AIWriterRequest(BaseModel):
-contract: str
-report_id: str
-personalization_context: dict
+    contract: str
+    report_id: str
+    personalization_context: dict
 
 
 AIWriterRequest.model_rebuild()
