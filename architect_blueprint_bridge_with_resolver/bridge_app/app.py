@@ -311,7 +311,6 @@ def write_status(run_dir: Path, status: str, detail: str = "") -> None:
     (run_dir / "frontdoor_status.json").write_text(json.dumps(payload, indent=2))
     print(f"BLUEPRINT_STATUS run={run_dir.name} status={status} detail={detail}", flush=True)
 
-
 def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
     order_key = safe_slug(str(order.get("name") or order.get("id") or webhook_id))
     line_key = safe_slug(str(item.get("id") or item.get("variant_id") or "item"))
@@ -319,80 +318,94 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if (run_dir / "frontdoor_completed.flag").exists():
-                  return
+        return
 
-        try:
-            intake = extract_intake(order, item)
-            intake = resolve_location(intake)
-            (run_dir / "shopify_order_snapshot.json").write_text(json.dumps(order, indent=2))
-            (run_dir / "customer_intake.json").write_text(json.dumps(intake, indent=2))
+    try:
+        intake = extract_intake(order, item)
+        intake = resolve_location(intake)
+        (run_dir / "shopify_order_snapshot.json").write_text(
+            json.dumps(order, indent=2)
+        )
+        (run_dir / "customer_intake.json").write_text(
+            json.dumps(intake, indent=2)
+        )
 
-            if (
-                intake.get("latitude") is None
-                or intake.get("longitude") is None
-                or intake.get("timezone_offset") is None
-            ):
+        if (
+            intake.get("latitude") is None
+            or intake.get("longitude") is None
+            or intake.get("timezone_offset") is None
+        ):
+            write_status(
+                run_dir,
+                "WAITING_FOR_LOCATION_RESOLUTION",
+                "Birth location was captured, but latitude/longitude/timezone are not resolved yet.",
+            )
+            return
+
+        write_status(run_dir, "RUNNING_BLUEPRINT_ENGINE")
+
+        cmd = [
+            sys.executable,
+            str(ENGINE_ROOT / "pipeline.py"),
+            "--intake",
+            str(run_dir / "customer_intake.json"),
+            "--live-provider",
+            "--out-dir",
+            str(run_dir / "engine_output"),
+        ]
+
+        if BLUEPRINT_WRITER == "ai-http":
+            if not ARCHITECT_AI_ENDPOINT:
                 write_status(
                     run_dir,
-                    "WAITING_FOR_LOCATION_RESOLUTION",
-                    "Birth location was captured, but latitude/longitude/timezone are not resolved yet.",
+                    "FRONTDOOR_ERROR",
+                    "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
                 )
                 return
 
-            write_status(run_dir, "RUNNING_BLUEPRINT_ENGINE")
-
-            cmd = [
-                sys.executable,
-                str(ENGINE_ROOT / "pipeline.py"),
-                "--intake", str(run_dir / "customer_intake.json"),
-                "--live-provider",
-                "--out-dir", str(run_dir / "engine_output"),
-            ]
-
-            if BLUEPRINT_WRITER == "ai-http":
-                if not ARCHITECT_AI_ENDPOINT:
-                    write_status(
-                        run_dir,
-                        "FRONTDOOR_ERROR",
-                        "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
-                    )
-                    return
-
-                cmd.extend([
-                    "--writer", "ai-http",
-                    "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
-                ])
-
-            completed = subprocess.run(
-                cmd,
-                cwd=str(ENGINE_ROOT),
-                capture_output=True,
-                text=True,
-                timeout=600,
+            cmd.extend(
+                [
+                    "--writer",
+                    "ai-http",
+                    "--ai-endpoint",
+                    ARCHITECT_AI_ENDPOINT,
+                ]
             )
 
-            (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
-            (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ENGINE_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600,
+        )
 
-            if completed.returncode != 0:
-                write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
-                return
+        (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
+        (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
-            manifest_path = run_dir / "engine_output" / "00_manifest.json"
-            manifest = json.loads(manifest_path.read_text())
+        if completed.returncode != 0:
+            write_status(
+                run_dir,
+                "ENGINE_ERROR",
+                completed.stderr[-2000:],
+            )
+            return
 
-            if manifest.get("status") == "PASS":
-                write_status(run_dir, "BLUEPRINT_READY")
-                (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
-            else:
-                write_status(
-                    run_dir,
-                    "REVIEW_REQUIRED",
-                    "Engine completed but final manifest did not PASS.",
-                )
+        manifest_path = run_dir / "engine_output" / "00_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
 
-         except Exception as exc:
-            write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
+        if manifest.get("status") == "PASS":
+            write_status(run_dir, "BLUEPRINT_READY")
+            (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
+        else:
+            write_status(
+                run_dir,
+                "REVIEW_REQUIRED",
+                "Engine completed but final manifest did not PASS.",
+            )
+
+    except Exception as exc:
+        write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
 
 
 @app.get("/health")
