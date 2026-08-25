@@ -9,6 +9,7 @@ import os
 import re
 import subprocess
 import sys
+import threading
 from datetime import datetime, time, timezone
 from pathlib import Path
 from typing import Any
@@ -311,6 +312,29 @@ def write_status(run_dir: Path, status: str, detail: str = "") -> None:
     (run_dir / "frontdoor_status.json").write_text(json.dumps(payload, indent=2))
     print(f"BLUEPRINT_STATUS run={run_dir.name} status={status} detail={detail}", flush=True)
 
+
+def _keep_render_awake(stop_event: threading.Event) -> None:
+    """Keep a long Blueprint job alive on Render's free web-service tier."""
+    service_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
+    if not service_url:
+        return
+
+    health_url = f"{service_url}/health"
+    while not stop_event.wait(240):
+        try:
+            req = URLRequest(
+                health_url,
+                headers={"User-Agent": "ArchitectBlueprintJobKeepalive/1.0"},
+            )
+            with urlopen(req, timeout=20) as response:
+                print(
+                    f"BLUEPRINT_KEEPALIVE status={response.status}",
+                    flush=True,
+                )
+        except Exception as exc:
+            # A missed heartbeat should be visible, but it must not abort the job.
+            print(f"BLUEPRINT_KEEPALIVE_ERROR detail={exc}", flush=True)
+
 def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
     order_key = safe_slug(str(order.get("name") or order.get("id") or webhook_id))
     line_key = safe_slug(str(item.get("id") or item.get("variant_id") or "item"))
@@ -319,6 +343,15 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
 
     if (run_dir / "frontdoor_completed.flag").exists():
         return
+
+    keepalive_stop = threading.Event()
+    keepalive_thread = threading.Thread(
+        target=_keep_render_awake,
+        args=(keepalive_stop,),
+        name=f"blueprint-keepalive-{run_dir.name}",
+        daemon=True,
+    )
+    keepalive_thread.start()
 
     try:
         intake = extract_intake(order, item)
@@ -406,6 +439,9 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
 
     except Exception as exc:
         write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
+    finally:
+        keepalive_stop.set()
+        keepalive_thread.join(timeout=1)
 
 
 @app.get("/health")
