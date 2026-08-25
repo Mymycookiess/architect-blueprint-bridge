@@ -262,7 +262,7 @@ def compose_report(context: dict, report_id: str) -> dict:
         body=[]
         for b in blocks:
            cleaned = _clean_source(b.get("source_text",""), customer)
-            if cleaned and cleaned not in body:
+           if cleaned and cleaned not in body:
                 body.append(cleaned)
         notes=_fact_notes(context,sec)
         content="\n\n".join(body + notes)
