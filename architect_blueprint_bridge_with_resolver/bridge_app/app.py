@@ -37,6 +37,8 @@ BLUEPRINT_PRODUCT_HANDLES = {
 # {"birth_location":"Oakland, California, USA","birth_date":"1996-10-27","birth_time":"02:18"}
 # and return {"latitude":37.8044,"longitude":-122.2712,"timezone_offset":-8}
 LOCATION_RESOLVER_URL = os.getenv("LOCATION_RESOLVER_URL", "")
+BLUEPRINT_WRITER = os.getenv("BLUEPRINT_WRITER", "deterministic")
+ARCHITECT_AI_ENDPOINT = os.getenv("ARCHITECT_AI_ENDPOINT", "")
 
 
 class LocationResolveRequest(BaseModel):
@@ -343,8 +345,27 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             "--live-provider",
             "--out-dir", str(run_dir / "engine_output"),
         ]
-        completed = subprocess.run(cmd, cwd=str(ENGINE_ROOT), capture_output=True, text=True, timeout=600)
+       if BLUEPRINT_WRITER == "ai-http":
+        if not ARCHITECT_AI_ENDPOINT:
+            write_status(
+                run_dir,
+                "FRONTDOOR_ERROR",
+                "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured."
+            )
+            return
+    
+        cmd.extend([
+            "--writer", "ai-http",
+            "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
+        ])
 
+completed = subprocess.run(
+    cmd,
+    cwd=str(ENGINE_ROOT),
+    capture_output=True,
+    text=True,
+    timeout=600
+)
         (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
         (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
