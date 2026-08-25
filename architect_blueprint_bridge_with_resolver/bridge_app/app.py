@@ -341,7 +341,7 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
 
         write_status(run_dir, "RUNNING_BLUEPRINT_ENGINE")
 
-        cmd = [
+         cmd = [           
             sys.executable,
             str(ENGINE_ROOT / "pipeline.py"),
             "--intake", str(run_dir / "customer_intake.json"),
@@ -369,24 +369,25 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             text=True,
             timeout=600
         )
-            (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
-            (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
+        (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
+        (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
-            if completed.returncode != 0:
-                write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
-                return
+        if completed.returncode != 0:
+            write_status(run_dir, "ENGINE_ERROR", completed.stderr[-2000:])
+            return
 
-            manifest_path = run_dir / "engine_output" / "00_manifest.json"
-            manifest = json.loads(manifest_path.read_text())
-            if manifest.get("status") == "PASS":
-                write_status(run_dir, "BLUEPRINT_READY")
-                (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
-            else:
-                write_status(
-                    run_dir,
-                    "REVIEW_REQUIRED",
-                    "Engine completed but final manifest did not PASS.",
-                )
+        manifest_path = run_dir / "engine_output" / "00_manifest.json"
+        manifest = json.loads(manifest_path.read_text())
+       
+        if manifest.get("status") == "PASS":
+            write_status(run_dir, "BLUEPRINT_READY")
+            (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
+        else:
+            write_status(
+                run_dir,
+                "REVIEW_REQUIRED",
+                "Engine completed but final manifest did not PASS.",
+            )
 
     except Exception as exc:
         write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
