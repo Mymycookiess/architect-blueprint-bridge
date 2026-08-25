@@ -39,6 +39,39 @@ SECTION_WORD_TARGETS = {
 def _section_id(title: str) -> str:
     return title.lower().replace(" ", "_").replace("/", "_")
 
+def _extract_section(result: object, title: str) -> dict:
+    """Accept both the new section response and the legacy full-report response."""
+    if not isinstance(result, dict):
+        raise RuntimeError(f"AI endpoint returned an invalid section: {title}")
+
+    section = result if "content" in result else None
+    if section is None:
+        sections = result.get("sections")
+        if isinstance(sections, list):
+            expected_id = _section_id(title)
+            section = next(
+                (
+                    item
+                    for item in sections
+                    if isinstance(item, dict)
+                    and (
+                        item.get("title") == title
+                        or item.get("section_id") == expected_id
+                    )
+                ),
+                None,
+            )
+
+    if not isinstance(section, dict) or not isinstance(section.get("content"), str):
+        raise RuntimeError(f"AI endpoint returned an invalid section: {title}")
+
+    section = dict(section)
+    section["title"] = title
+    section["section_id"] = _section_id(title)
+    section.setdefault("status", "INCLUDED" if section["content"].strip() else "REVIEW_REQUIRED")
+    section.setdefault("evidence_refs", [])
+    return section
+
 def _request_section(context, report_id, endpoint, token, title):
     body=json.dumps({
         "contract":CONTRACT,
@@ -52,9 +85,7 @@ def _request_section(context, report_id, endpoint, token, title):
     req=Request(endpoint,data=body,headers=headers,method="POST")
     with urlopen(req,timeout=300) as resp:
         result=json.loads(resp.read().decode("utf-8"))
-    if not isinstance(result,dict) or "content" not in result:
-        raise RuntimeError(f"AI endpoint returned an invalid section: {title}")
-    return result
+    return _extract_section(result, title)
 
 def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_env: str="ARCHITECT_AI_TOKEN") -> dict:
     token=os.environ.get(token_env,"")
