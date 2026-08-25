@@ -554,6 +554,12 @@ def ai_writer(
 
     sections = context.get("sections", {})
 
+    mode = str(context.get("mode") or "FULL").upper()
+    if mode == "PARTIAL":
+        total_word_target = "7,200 to 8,200 words"
+    else:
+        total_word_target = "9,200 to 10,200 words"
+
     allowed_refs = {}
     for section_name, section_data in sections.items():
         allowed_refs[section_name] = [
@@ -580,6 +586,39 @@ For each section:
 - personalize the writing using only selected source blocks and chart facts
 - use only evidence_refs that belong to that section
 - never cite a source_content_id from another section
+
+LENGTH REQUIREMENTS:
+- The complete report must contain {total_word_target} across section content.
+- Treat the length requirement as mandatory, not aspirational.
+- Develop each included section into substantive long-form prose; do not merely
+  summarize its source blocks.
+- Expand only through explanation, integration, reflection, practical
+  application, and grounded examples that remain faithful to the supplied
+  context. Do not add new astrology facts.
+- Keep omitted sections omitted and redistribute their word allowance among the
+  included sections.
+- Before returning the report, silently estimate the total word count and expand
+  underdeveloped included sections until the target range is met.
+
+For a FULL report, use these approximate section word budgets:
+- Personalized Cover: 80
+- Welcome to Your Blueprint: 350
+- Birth Chart Snapshot: 550
+- Your Story Begins Here: 450
+- Your Core Identity — Sun: 650
+- Your Emotional World — Moon: 650
+- How the World Meets You — Rising: 550
+- Your Big Three: 650
+- Your Houses / Life Areas: 900
+- Your Inner Wiring: 650
+- Your Relationship Blueprint: 650
+- Your Career & Purpose Blueprint: 650
+- Your Growth Blueprint: 550
+- Alignment & Action: 500
+- Personalized Action Plan: 750
+- Your First / Next Brick: 350
+- Your Blueprint Summary: 550
+- Your Next Chapter / Continue: 350
 
 The Personalized Action Plan must contain exactly:
 - 3 strengths
@@ -678,6 +717,7 @@ Return only the requested structured report object.
 
     openai_payload = {
         "model": OPENAI_MODEL,
+        "max_output_tokens": 30000,
         "instructions": instructions,
         "input": json.dumps(
             {
