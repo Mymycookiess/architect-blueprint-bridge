@@ -251,7 +251,7 @@ def _fact_notes(context, section):
     return notes
 
 def compose_report(context: dict, report_id: str) -> dict:
-        customer = str(context.get("customer") or "").strip()
+    customer = str(context.get("customer") or "").strip()
     sections=[]
     for sec in SECTION_ORDER:
         cfg=context["sections"].get(sec,{"status":"REVIEW_REQUIRED","source_blocks":[]})
