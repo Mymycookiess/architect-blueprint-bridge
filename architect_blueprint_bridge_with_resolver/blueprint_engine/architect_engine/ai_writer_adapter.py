@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 import json, os
+import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 
 from architect_engine.writer import SECTION_ORDER
@@ -72,13 +74,18 @@ def _extract_section(result: object, title: str) -> dict:
     section.setdefault("evidence_refs", [])
     return section
 
-def _request_section(context, report_id, endpoint, token, title):
+def _word_count(section: dict) -> int:
+    return len(re.findall(r"\b[\w’'-]+\b", section.get("content", "")))
+
+
+def _request_section_once(context, report_id, endpoint, token, title, draft=None):
     body=json.dumps({
         "contract":CONTRACT,
         "report_id":report_id,
         "personalization_context":context,
         "section_name":title,
         "section_word_target":SECTION_WORD_TARGETS[title],
+        "section_draft":draft,
     }).encode("utf-8")
     headers={"Content-Type":"application/json"}
     if token: headers["Authorization"]=f"Bearer {token}"
@@ -87,20 +94,46 @@ def _request_section(context, report_id, endpoint, token, title):
         result=json.loads(resp.read().decode("utf-8"))
     return _extract_section(result, title)
 
+
+def _request_section(context, report_id, endpoint, token, title):
+    section = _request_section_once(context, report_id, endpoint, token, title)
+    target = SECTION_WORD_TARGETS[title]
+    if _word_count(section) < int(target * 0.85):
+        expanded = _request_section_once(
+            context, report_id, endpoint, token, title, draft=section,
+        )
+        if _word_count(expanded) > _word_count(section):
+            section = expanded
+    return section
+
 def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_env: str="ARCHITECT_AI_TOKEN") -> dict:
     token=os.environ.get(token_env,"")
     if not endpoint:
         raise RuntimeError("AI endpoint is required.")
-    generated=[]
+    generated_by_title={}
+    pending=[]
     for title in SECTION_ORDER:
         cfg=context.get("sections",{}).get(title,{"status":"REVIEW_REQUIRED","source_blocks":[]})
         if cfg.get("status")=="OMITTED_BY_MODE":
-            generated.append({
+            generated_by_title[title]={
                 "section_id":_section_id(title),"title":title,
                 "status":"OMITTED_BY_MODE","content":"","evidence_refs":[],
-            })
+            }
             continue
-        generated.append(_request_section(context,report_id,endpoint,token,title))
+        pending.append(title)
+
+    # Two concurrent requests keep the production run comfortably inside the
+    # bridge timeout while avoiding a burst of API traffic.
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        futures={
+            pool.submit(_request_section,context,report_id,endpoint,token,title):title
+            for title in pending
+        }
+        for future in as_completed(futures):
+            title=futures[future]
+            generated_by_title[title]=future.result()
+
+    generated=[generated_by_title[title] for title in SECTION_ORDER]
     return {
         "report_id":report_id,"schema_version":"blueprint_report_v1",
         "context_version":context["context_version"],"mode":context["mode"],
