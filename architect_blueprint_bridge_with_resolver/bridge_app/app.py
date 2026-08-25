@@ -348,27 +348,27 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             "--live-provider",
             "--out-dir", str(run_dir / "engine_output"),
         ]          
-            if BLUEPRINT_WRITER == "ai-http":
-                if not ARCHITECT_AI_ENDPOINT:
-                    write_status(
-                        run_dir,
-                        "FRONTDOOR_ERROR",
-                        "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
-                    )
-                    return
+        if BLUEPRINT_WRITER == "ai-http":
+            if not ARCHITECT_AI_ENDPOINT:
+                write_status(
+                    run_dir,
+                    "FRONTDOOR_ERROR",
+                    "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
+                )
+                return
 
-                cmd.extend([
-                    "--writer", "ai-http",
-                    "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
+            cmd.extend([
+                "--writer", "ai-http",
+                "--ai-endpoint", ARCHITECT_AI_ENDPOINT,
                 ])
 
-            completed = subprocess.run(
-                cmd,
-                cwd=str(ENGINE_ROOT),
-                capture_output=True,
-                text=True,
-                timeout=600
-            )
+        completed = subprocess.run(
+            cmd,
+            cwd=str(ENGINE_ROOT),
+            capture_output=True,
+            text=True,
+            timeout=600
+        )
             (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
             (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
