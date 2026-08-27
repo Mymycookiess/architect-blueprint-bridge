@@ -85,10 +85,38 @@ def _normalize_tokens(value: str) -> set[str]:
     return tokens
 
 
+def _geocode_search_name(location: str) -> str:
+    """Extract the locality from comma-separated or Shopify-style US input."""
+    if "," in location:
+        return location.split(",", 1)[0].strip() or location.strip()
+
+    words = location.split()
+    lowered = [word.lower().rstrip(".") for word in words]
+
+    for country_suffix in (("united", "states", "of", "america"), ("united", "states"), ("usa",), ("us",)):
+        size = len(country_suffix)
+        if tuple(lowered[-size:]) == country_suffix:
+            words = words[:-size]
+            lowered = lowered[:-size]
+            break
+
+    if lowered and lowered[-1].upper() in US_STATE_NAMES:
+        words = words[:-1]
+    else:
+        for state_name in sorted(US_STATE_NAMES.values(), key=lambda value: len(value.split()), reverse=True):
+            state_words = tuple(state_name.split())
+            size = len(state_words)
+            if tuple(lowered[-size:]) == state_words:
+                words = words[:-size]
+                break
+
+    return " ".join(words).strip() or location.strip()
+
+
 def _geocode_birth_location(location: str) -> dict:
     # Open-Meteo geocoding is keyless. Search the locality name, then score
     # returned candidates against the full customer-entered location.
-    locality = location.split(",", 1)[0].strip() or location.strip()
+    locality = _geocode_search_name(location)
     url = (
         "https://geocoding-api.open-meteo.com/v1/search"
         f"?name={quote(locality)}&count=10&language=en&format=json"
