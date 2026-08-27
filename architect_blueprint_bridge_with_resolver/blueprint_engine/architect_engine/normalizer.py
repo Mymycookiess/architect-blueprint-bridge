@@ -1,5 +1,6 @@
 
 from __future__ import annotations
+import math
 APPROVED_PLANETS = ["Sun","Moon","Mercury","Venus","Mars","Jupiter","Saturn"]
 ALLOWED_ASPECTS = {"Conjunction","Sextile","Square","Trine","Opposition"}
 SIGNS = ["Aries","Taurus","Gemini","Cancer","Leo","Virgo","Libra","Scorpio","Sagittarius","Capricorn","Aquarius","Pisces"]
@@ -9,7 +10,30 @@ def sign_from_longitude(deg):
 def norm_degree(deg):
     return round(deg%30,6) if deg is not None else None
 
+def _valid_longitude(value):
+    return isinstance(value, (int, float)) and not isinstance(value, bool) and math.isfinite(value) and 0 <= value < 360
+
+def _normalize_full_houses(raw_houses):
+    houses=[]
+    for h in raw_houses:
+        house=h.get("house_id", h.get("house"))
+        deg=h.get("start_degree", h.get("degree", h.get("start")))
+        if isinstance(house, bool) or not isinstance(house, (int, float)) or int(house) != house:
+            return [], False
+        house=int(house)
+        if not 1 <= house <= 12 or not _valid_longitude(deg):
+            return [], False
+        houses.append({
+            "house":house,
+            "sign":h.get("sign") or sign_from_longitude(deg),
+            "cusp_absolute_longitude":deg,
+            "cusp_degree":norm_degree(deg)
+        })
+    valid=len(houses)==12 and {h["house"] for h in houses}==set(range(1,13))
+    return (sorted(houses,key=lambda h:h["house"]), True) if valid else ([], False)
+
 def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
+    mode = "FULL" if intake.get("birth_time_status")=="KNOWN" else "PARTIAL"
     planets = raw.get("planets", [])
     pmap = {p.get("name"):p for p in planets}
     placements={}
@@ -25,17 +49,23 @@ def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
                 "speed":p.get("speed")
             }
     houses=[]
-    for h in raw.get("houses",[]):
-        deg=h.get("degree", h.get("start"))
-        houses.append({
-            "house":h.get("house"),
-            "sign":h.get("sign") or sign_from_longitude(deg),
-            "cusp_absolute_longitude":deg,
-            "cusp_degree":norm_degree(deg)
-        })
+    houses_valid=False
+    if mode=="FULL":
+        houses,houses_valid=_normalize_full_houses(raw.get("houses",[]))
+    else:
+        for h in raw.get("houses",[]):
+            deg=h.get("degree", h.get("start"))
+            houses.append({
+                "house":h.get("house"),
+                "sign":h.get("sign") or sign_from_longitude(deg),
+                "cusp_absolute_longitude":deg,
+                "cusp_degree":norm_degree(deg)
+            })
     asc = raw.get("ascendant")
     mc = raw.get("midheaven")
-    if asc is None and houses:
+    if mode=="FULL":
+        asc=None
+    if asc is None and houses_valid:
         h1=next((h for h in houses if h["house"]==1),None)
         if h1: asc=h1["cusp_absolute_longitude"]
     if mc is None and houses:
@@ -52,11 +82,11 @@ def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
                 "orb":a.get("orb"),
                 "separation":a.get("diff",a.get("separation"))
             })
-    mode = "FULL" if intake.get("birth_time_status")=="KNOWN" else "PARTIAL"
+    full_chart_valid=mode!="FULL" or (houses_valid and asc is not None)
     availability = {
         "sun":"sun" in placements, "moon":"moon" in placements,
         "rising": mode=="FULL" and asc is not None,
-        "houses": mode=="FULL" and len(houses)==12,
+        "houses": mode=="FULL" and houses_valid,
         "aspects": bool(aspects),
         "chart_wheel": bool(raw.get("chart_url") or raw.get("chart_wheel_reference"))
     }
@@ -82,7 +112,7 @@ def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
     return {
         "record_schema_version":"architect_chart_record_v1",
         "record_id":record_id,
-        "record_status":"VALID_FOR_TEST",
+        "record_status":"VALID_FOR_TEST" if full_chart_valid else "REVIEW_REQUIRED",
         "customer":{
             "name":intake["customer_name"],"birth_date":intake["birth_date"],
             "birth_time_local":intake.get("birth_time"),
@@ -91,7 +121,7 @@ def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
             "latitude":intake.get("latitude"),"longitude":intake.get("longitude"),
             "timezone_offset":intake.get("timezone_offset")
         },
-        "calculation":{"mode":mode,"provider":"AstrologyAPI","zodiac":"tropical","house_system":"placidus","validation_status":"VALID"},
+        "calculation":{"mode":mode,"provider":"AstrologyAPI","zodiac":"tropical","house_system":"placidus","validation_status":"VALID" if full_chart_valid else "REVIEW_REQUIRED"},
         "availability":availability,
         "placements":placements,
         "angles":{
@@ -102,5 +132,5 @@ def normalize_provider_bundle(raw: dict, intake: dict, record_id: str):
         "aspects":aspects,
         "chart_wheel_reference":raw.get("chart_url") or raw.get("chart_wheel_reference"),
         "lookup_keys":lookup,
-        "qa":{"missing_required_fields":[],"notes":["Normalized by reusable pipeline V1."]}
+        "qa":{"missing_required_fields":[] if full_chart_valid else ["houses","angles.ascendant"],"notes":["Normalized by reusable pipeline V1."]}
     }

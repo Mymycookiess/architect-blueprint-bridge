@@ -35,7 +35,7 @@ SECTION_ALIASES = {
 def _safe_text(v): return str(v or "").strip()
 def _norm(v): return re.sub(r"\s+"," ",_safe_text(v)).strip().lower()
 
-def _matches_sign(row, chart):
+def _matches_sign(row, chart, section=None):
     placement=_safe_text(row.get("Placement / Sign"))
     if not placement: return None
     p=_norm(placement)
@@ -45,6 +45,17 @@ def _matches_sign(row, chart):
         if s: signs.append((key,s.lower()))
     asc=chart.get("angles",{}).get("ascendant",{}).get("sign")
     if asc: signs.append(("rising",asc.lower()))
+    for key,sign in signs:
+        body_names=("rising","ascendant") if key=="rising" else (key,)
+        if any(re.search(rf"\b{re.escape(body)}\b",p) for body in body_names):
+            return sign in p
+    section_body={
+        "Your Core Identity — Sun":"sun",
+        "Your Emotional World — Moon":"moon",
+        "How the World Meets You — Rising":"rising",
+    }.get(section)
+    if section_body:
+        return any(key==section_body and sign in p for key,sign in signs)
     return any(sign in p for _,sign in signs)
 
 def select_sources(chart: dict, library_path: str, sheet_name: str="DETAILED CONTENT LIBRARY") -> dict:
@@ -64,7 +75,10 @@ def select_sources(chart: dict, library_path: str, sheet_name: str="DETAILED CON
             action=_safe_text(r.get("Engine Action")).upper()
             cls=_safe_text(r.get("V2 Content Class")).upper()
             placement=_safe_text(r.get("Placement / Sign"))
-            exact=_matches_sign(r,chart)
+            source_text=_safe_text(r.get("Corrected Source Text"))
+            if mode=="PARTIAL" and sec=="Your Big Three" and re.search(r"\b(?:rising|ascendant)\b",source_text,re.I):
+                filtered.append((sec,r,"partial_mode_rising_reference")); continue
+            exact=_matches_sign(r,chart,sec)
             if placement and exact is False:
                 filtered.append((sec,r,"placement_or_sign_mismatch")); continue
             if mode=="PARTIAL" and sec in ("How the World Meets You — Rising","Your Houses / Life Areas"):
@@ -73,7 +87,7 @@ def select_sources(chart: dict, library_path: str, sheet_name: str="DETAILED CON
                 score=60
             elif action in ("SYNTHESIZE","KEEP_AND_SYNTHESIZE"):
                 score=55
-            elif action=="SELECT_AND_SYNTHESIZE":
+            elif action in ("SELECT_AND_SYNTHESIZE","SELECT_MATCH"):
                 if exact:
                     score=170
                 else:
@@ -101,7 +115,7 @@ def select_sources(chart: dict, library_path: str, sheet_name: str="DETAILED CON
         count=sum(1 for x in selected if x["section_name"]==sec)
         if mode=="PARTIAL" and sec in ("How the World Meets You — Rising","Your Houses / Life Areas"):
             state[sec]="OMITTED_BY_MODE"
-        elif count:
+        elif count or (mode=="PARTIAL" and sec=="Your Big Three" and chart.get("availability",{}).get("sun") and chart.get("availability",{}).get("moon")):
             state[sec]="VALID"
         else:
             state[sec]="REVIEW_REQUIRED"

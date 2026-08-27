@@ -64,8 +64,11 @@ def main():
     save_json(out/"04_report_payload.json",report)
 
     pdf=out/"05_architect_blueprint.pdf"
-    pages=render_pdf(report,str(pdf))
-    qa=run_qa(chart,selector,context,report,cfg,rendered_pages=pages)
+    pages,render_diagnostics=render_pdf(report,str(pdf),return_diagnostics=True)
+    qa=run_qa(
+        chart,selector,context,report,cfg,
+        rendered_pages=pages,render_diagnostics=render_diagnostics
+    )
     save_json(out/"06_qa.json",qa)
 
     final_pass=(

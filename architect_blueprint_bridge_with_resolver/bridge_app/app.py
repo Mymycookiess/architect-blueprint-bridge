@@ -24,6 +24,12 @@ from fastapi.responses import FileResponse
 APP_ROOT = Path(__file__).resolve().parent
 PACKAGE_ROOT = APP_ROOT.parent
 ENGINE_ROOT = PACKAGE_ROOT / "blueprint_engine"
+if str(ENGINE_ROOT) not in sys.path:
+    sys.path.insert(0, str(ENGINE_ROOT))
+from architect_engine.content_rules import report_content_rule_issues, section_content_rule_issues
+from architect_engine.confidence_rules import report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
+from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
+from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 BLUEPRINT_OUTPUT_ROOT = Path(os.getenv("BLUEPRINT_OUTPUT_ROOT", str(PACKAGE_ROOT / "production_runs")))
@@ -665,14 +671,15 @@ target. Return the entire revised section, not an addendum.
 {payload.contract}
 Write only the Blueprint section named: {section_name}
 Target approximately {target} words and stay within 15 percent of that target.
+{section_confidence_rules(section_name, context.get("mode"))}
+{section_emotional_rules(section_name)}
+{section_progression_rules(section_name)}
 {revision_instruction}
 Use only this section's supplied data and the verified chart facts in the input.
 Do not use outside astrology knowledge or invent facts. Develop polished,
 substantive prose through grounded explanation, integration, reflection,
 practical application, and examples faithful to the supplied context.
 Avoid repetitive filler and generic horoscope language.
-For Personalized Action Plan include exactly 3 strengths, 3 supporting habits,
-3 patterns to watch, 1 challenge, 1 encouraging message, and 1 Next Brick.
 Return one section object. Use only allowed_evidence_refs in evidence_refs.
 """,
             "input": json.dumps({
@@ -699,6 +706,11 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
                 status_code=422,
                 detail=f"Source-boundary violation in section: {section_name}",
             )
+        content_issues = section_content_rule_issues(section_name, section.get("content", ""))
+        content_issues.extend(section_confidence_rule_issues(section_name,section.get("content",""),context.get("mode")))
+        content_issues.extend(section_emotional_rule_issues(section_name,section.get("content",""),section.get("status")))
+        if content_issues:
+            raise HTTPException(status_code=422, detail="; ".join(content_issues))
         return section
 
     mode = str(context.get("mode") or "FULL").upper()
@@ -727,6 +739,35 @@ Do not invent placements, houses, aspects, traits, events, diagnoses,
 predictions, destiny claims, or guaranteed outcomes.
 
 Every statement must be grounded in the supplied context.
+
+Use chart_facts.synthesis_anchors as the exclusive map for cross-placement
+synthesis. Integrate Sun/Moon/Rising strongly in FULL Big Three; omit Rising and
+houses completely in PARTIAL. In Inner Wiring, Relationships, Career, Growth,
+and Summary, combine only the factors assigned to that chapter. Explain balance,
+tension, reinforcement, or contrast in plain language without inventing traits.
+Do not reuse the same synthesis passage in multiple chapters. Early chapters
+should remain focused, with at most one light validated cross-reference.
+
+State chart-based interpretations directly and confidently when supported. Do
+not repeat phrases such as “this may suggest,” “this can suggest,” “you might,”
+or “could indicate,” and do not repeat reminders that astrology is uncertain.
+Place any brief interpretive boundary once in Welcome. In PARTIAL mode, explain
+the unavailable Rising and houses once in Welcome. Preserve the prohibitions on
+guaranteed outcomes, destiny, diagnosis, and absolute future prediction.
+
+In Moon, Big Three, Inner Wiring, Relationships, Career, Growth, and Summary,
+translate the approved source material into recognizable internal experience:
+what feels safe or pressured, what the person protects, needs from others,
+notices under stress, or weighs when making choices. Show supported tension and
+reinforcement without inventing biography, trauma, childhood events, diagnoses,
+relationship history, or specific life events.
+
+Use deliberate progression across the report: introduce a pattern in its early
+chapter, apply it to a specific life area in mid-report chapters, deepen it in
+later synthesis, and name only the concise through-line in Summary. Do not copy
+exact or near-identical sentences, emotional conclusions, synthesis passages,
+transitions, or closing paragraphs across chapters. A callback is allowed only
+when it adds a new context, consequence, tension, choice, or application.
 
 For each section:
 - preserve the supplied section purpose
@@ -774,6 +815,14 @@ The Personalized Action Plan must contain exactly:
 - 1 challenge
 - 1 encouraging message
 - 1 Next Brick
+
+Only the Personalized Action Plan may use those six Action Plan headings or
+that multi-part structure. Do not repeat it in any earlier chapter. Earlier
+interpretive chapters should deepen recognition and understanding. When a
+closing reflection is useful, label it Architect Reflection, use only 1-2 short
+personalized prompts or observations, and keep it to 60-90 words maximum. Do
+not add a checklist or generic motivational filler. Preserve Your First / Next
+Brick as its own focused final section without copying the six-part template.
 
 The writing should feel reflective, premium, calm, specific, and useful.
 Avoid repetitive filler and generic horoscope language.
@@ -954,5 +1003,12 @@ Return only the requested structured report object.
         "source_boundary": "LOCKED_TO_CONTEXT",
         "new_astrology_added": False,
     }
+
+    content_issues = report_content_rule_issues(report)
+    content_issues.extend(report_confidence_rule_issues(report))
+    content_issues.extend(report_emotional_rule_issues(report))
+    content_issues.extend(report_repetition_rule_issues(report))
+    if content_issues:
+        raise HTTPException(status_code=422, detail="; ".join(content_issues))
 
     return report

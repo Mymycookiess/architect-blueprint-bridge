@@ -1,6 +1,7 @@
 
 from __future__ import annotations
 from collections import defaultdict
+from .synthesis import build_synthesis_anchors
 
 def build_context(chart: dict, selector: dict, context_id: str) -> dict:
     grouped=defaultdict(list)
@@ -30,7 +31,8 @@ def build_context(chart: dict, selector: dict, context_id: str) -> dict:
             "houses":chart.get("houses",[]),
             "aspects":chart.get("aspects",[]),
             "availability":chart.get("availability",{}),
-            "lookup_keys":chart.get("lookup_keys",[])
+            "lookup_keys":chart.get("lookup_keys",[]),
+            "synthesis_anchors":build_synthesis_anchors(chart)
         },
         "sections":sections,
         "source_trace":[

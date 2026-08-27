@@ -6,6 +6,11 @@ from concurrent.futures import ThreadPoolExecutor, as_completed
 from urllib.request import Request, urlopen
 
 from architect_engine.writer import SECTION_ORDER
+from architect_engine.content_rules import section_content_rule_issues, section_writing_rules
+from architect_engine.synthesis import section_synthesis_rules
+from architect_engine.confidence_rules import section_confidence_rule_issues, section_confidence_rules
+from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
+from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 
 CONTRACT = """
 You are the Architect Blueprint writing stage.
@@ -80,7 +85,7 @@ def _word_count(section: dict) -> int:
 
 def _request_section_once(context, report_id, endpoint, token, title, draft=None):
     body=json.dumps({
-        "contract":CONTRACT,
+        "contract":CONTRACT+"\n\n"+section_writing_rules(title)+"\n\n"+section_synthesis_rules(title)+"\n\n"+section_confidence_rules(title,context.get("mode"))+"\n\n"+section_emotional_rules(title)+"\n\n"+section_progression_rules(title),
         "report_id":report_id,
         "personalization_context":context,
         "section_name":title,
@@ -98,12 +103,17 @@ def _request_section_once(context, report_id, endpoint, token, title, draft=None
 def _request_section(context, report_id, endpoint, token, title):
     section = _request_section_once(context, report_id, endpoint, token, title)
     target = SECTION_WORD_TARGETS[title]
-    if _word_count(section) < int(target * 0.85):
+    if section_content_rule_issues(title, section.get("content", "")) or section_confidence_rule_issues(title,section.get("content",""),context.get("mode")) or section_emotional_rule_issues(title,section.get("content",""),section.get("status")) or _word_count(section) < int(target * 0.85):
         expanded = _request_section_once(
             context, report_id, endpoint, token, title, draft=section,
         )
-        if _word_count(expanded) > _word_count(section):
+        if not section_content_rule_issues(title, expanded.get("content", "")) and not section_confidence_rule_issues(title,expanded.get("content",""),context.get("mode")) and not section_emotional_rule_issues(title,expanded.get("content",""),expanded.get("status")):
             section = expanded
+    issues = section_content_rule_issues(title, section.get("content", ""))
+    issues.extend(section_confidence_rule_issues(title,section.get("content",""),context.get("mode")))
+    issues.extend(section_emotional_rule_issues(title,section.get("content",""),section.get("status")))
+    if issues:
+        raise RuntimeError(f"AI section violates content rules ({title}): {'; '.join(issues)}")
     return section
 
 def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_env: str="ARCHITECT_AI_TOKEN") -> dict:
@@ -134,9 +144,14 @@ def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_e
             generated_by_title[title]=future.result()
 
     generated=[generated_by_title[title] for title in SECTION_ORDER]
-    return {
+    report={
         "report_id":report_id,"schema_version":"blueprint_report_v1",
         "context_version":context["context_version"],"mode":context["mode"],
         "customer":context["customer"],"sections":generated,
         "qa":{"source_boundary":"LOCKED_TO_CONTEXT","new_astrology_added":False},
     }
+    issues=report_emotional_rule_issues(report)
+    issues.extend(report_repetition_rule_issues(report))
+    if issues:
+        raise RuntimeError("AI report violates emotional-specificity rules: "+"; ".join(issues))
+    return report
