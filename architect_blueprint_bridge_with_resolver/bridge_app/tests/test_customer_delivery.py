@@ -1,9 +1,12 @@
+import io
 import json
 import os
 import tempfile
 import unittest
+from contextlib import redirect_stdout
 from pathlib import Path
 from unittest.mock import patch
+from urllib.error import HTTPError
 
 from fastapi import HTTPException
 
@@ -165,6 +168,12 @@ class CustomerDeliveryTests(unittest.TestCase):
 
         payload = json.loads(captured["request"].data.decode("utf-8"))
         self.assertEqual(message_id, "email_789")
+        self.assertEqual(captured["request"].full_url, "https://api.resend.com/emails")
+        self.assertEqual(captured["request"].method, "POST")
+        self.assertEqual(captured["request"].get_header("Authorization"), "Bearer resend-key")
+        self.assertEqual(captured["request"].get_header("Content-type"), "application/json")
+        self.assertEqual(payload["from"], DELIVERY_ENV["BLUEPRINT_FROM_EMAIL"])
+        self.assertEqual(payload["to"], ["customer@example.com"])
         self.assertEqual(payload["subject"], "Your Architect Blueprint Is Ready")
         self.assertIn("Your personalized Architect Blueprint is complete.", payload["html"])
         self.assertIn("Download Your Blueprint", payload["html"])
@@ -180,6 +189,47 @@ class CustomerDeliveryTests(unittest.TestCase):
             ):
                 state = attempt_delivery_if_manifest_pass(run_dir, self._intake())
         self.assertEqual(state["status"], "DELIVERY_ERROR")
+
+    def test_resend_403_body_is_sanitized_and_logged_with_delivery_id(self):
+        with tempfile.TemporaryDirectory() as root:
+            run_dir = self._run_dir(root)
+            r2 = FakeR2Client()
+            response_body = json.dumps({
+                "statusCode": 403,
+                "name": "validation_error",
+                "message": (
+                    "Sender blueprints@example.com is not verified; resend-key; "
+                    "https://private-download.example/signed"
+                ),
+                "request": "full request body must not be logged",
+            }).encode("utf-8")
+            forbidden = HTTPError(
+                "https://api.resend.com/emails",
+                403,
+                "Forbidden",
+                {},
+                io.BytesIO(response_body),
+            )
+            output = io.StringIO()
+            with patch.dict(os.environ, DELIVERY_ENV, clear=False), patch(
+                "bridge_app.delivery._r2_client", return_value=r2
+            ), patch(
+                "bridge_app.delivery.urlopen", side_effect=forbidden
+            ), redirect_stdout(output):
+                state = deliver_if_manifest_pass(run_dir, self._intake())
+
+        self.assertEqual(state["status"], "DELIVERY_ERROR")
+        self.assertEqual(state["provider_http_status"], 403)
+        self.assertIn("validation_error", state["sanitized_error_detail"])
+        error_line = output.getvalue().splitlines()[-1]
+        diagnostic = json.loads(error_line.split(" ", 1)[1])
+        self.assertEqual(diagnostic["http_status"], 403)
+        self.assertEqual(diagnostic["delivery_id"], "9cf44e303b202fbd")
+        self.assertNotIn("customer@example.com", error_line)
+        self.assertNotIn("blueprints@example.com", error_line)
+        self.assertNotIn("resend-key", error_line)
+        self.assertNotIn("private-download.example", error_line)
+        self.assertNotIn("full request body", error_line)
 
 
 if __name__ == "__main__":

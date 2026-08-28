@@ -8,6 +8,7 @@ import re
 import threading
 from datetime import datetime, timezone
 from pathlib import Path
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 
@@ -16,6 +17,13 @@ PDF_RELATIVE_PATH = Path("engine_output") / "05_architect_blueprint.pdf"
 MANIFEST_RELATIVE_PATH = Path("engine_output") / "00_manifest.json"
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
+
+
+class ResendHTTPFailure(RuntimeError):
+    def __init__(self, status: int, detail: str):
+        self.status = status
+        self.detail = detail
+        super().__init__(f"Resend HTTP {status}: {detail}")
 
 
 def _now() -> str:
@@ -46,6 +54,7 @@ def _load_state(run_dir: Path) -> dict:
         "status": "DELIVERY_PENDING",
         "object_key": _object_key(run_dir.name),
         "provider_message_id": None,
+        "provider_http_status": None,
         "attempt_count": 0,
         "created_at": now,
         "updated_at": now,
@@ -80,6 +89,48 @@ def _required_env(name: str) -> str:
     if not value:
         raise RuntimeError(f"{name} is not configured")
     return value
+
+
+def _sanitize_text(detail: str, email: str = "") -> str:
+    secrets = (
+        os.getenv("R2_ACCESS_KEY_ID", ""),
+        os.getenv("R2_SECRET_ACCESS_KEY", ""),
+        os.getenv("RESEND_API_KEY", ""),
+        os.getenv("R2_ACCOUNT_ID", ""),
+        email,
+    )
+    for secret in secrets:
+        if secret:
+            detail = detail.replace(secret, "<redacted>")
+    detail = re.sub(
+        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
+        "<redacted-email>",
+        detail,
+        flags=re.I,
+    )
+    detail = re.sub(r"https?://\S+", "<redacted-url>", detail, flags=re.I)
+    return detail[:500]
+
+
+def _safe_resend_response_detail(raw: bytes, email: str) -> str:
+    try:
+        decoded = raw.decode("utf-8")
+    except UnicodeDecodeError:
+        return "<non-UTF-8 response body omitted>"
+    try:
+        payload = json.loads(decoded)
+    except json.JSONDecodeError:
+        return _sanitize_text(decoded, email) or "<empty response body>"
+    if isinstance(payload, dict):
+        allowed = {
+            key: payload[key]
+            for key in ("statusCode", "name", "message", "error")
+            if key in payload
+        }
+        detail = json.dumps(allowed or {"detail": "<structured response detail omitted>"})
+    else:
+        detail = json.dumps(payload)
+    return _sanitize_text(detail, email)
 
 
 def _r2_client():
@@ -125,30 +176,17 @@ def _send_resend(email: str, download_url: str, idempotency_key: str) -> str | N
         },
         method="POST",
     )
-    with urlopen(request, timeout=30) as response:
-        result = json.loads(response.read().decode("utf-8"))
+    try:
+        with urlopen(request, timeout=30) as response:
+            result = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = _safe_resend_response_detail(exc.read(), email)
+        raise ResendHTTPFailure(exc.code, detail) from None
     return result.get("id")
 
 
 def _sanitize_error(exc: Exception, email: str = "") -> str:
-    detail = str(exc)
-    secrets = (
-        os.getenv("R2_ACCESS_KEY_ID", ""),
-        os.getenv("R2_SECRET_ACCESS_KEY", ""),
-        os.getenv("RESEND_API_KEY", ""),
-        os.getenv("R2_ACCOUNT_ID", ""),
-        email,
-    )
-    for secret in secrets:
-        if secret:
-            detail = detail.replace(secret, "<redacted>")
-    detail = re.sub(
-        r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b",
-        "<redacted-email>",
-        detail,
-        flags=re.I,
-    )
-    return detail[:500] or exc.__class__.__name__
+    return _sanitize_text(str(exc), email) or exc.__class__.__name__
 
 
 def _log_delivery(run_id: str, state: dict) -> None:
@@ -158,6 +196,8 @@ def _log_delivery(run_id: str, state: dict) -> None:
         "attempt": state["attempt_count"],
     }
     if state["status"] == "DELIVERY_ERROR":
+        if state.get("provider_http_status") is not None:
+            record["http_status"] = state["provider_http_status"]
         record["detail"] = state.get("sanitized_error_detail")
     print(
         "BLUEPRINT_DELIVERY_STATUS "
@@ -176,6 +216,7 @@ def deliver_blueprint(run_dir: Path, intake: dict) -> dict:
         email = str((intake.get("_shopify") or {}).get("email") or "").strip()
         state["attempt_count"] = int(state.get("attempt_count") or 0) + 1
         state["status"] = "DELIVERY_PENDING"
+        state["provider_http_status"] = None
         state["sanitized_error_detail"] = None
         state["error_at"] = None
         _save_state(run_dir, state)
@@ -225,6 +266,7 @@ def deliver_blueprint(run_dir: Path, intake: dict) -> dict:
             _log_delivery(run_dir.name, state)
         except Exception as exc:
             state["status"] = "DELIVERY_ERROR"
+            state["provider_http_status"] = getattr(exc, "status", None)
             state["error_at"] = _now()
             state["sanitized_error_detail"] = _sanitize_error(exc, email)
             _save_state(run_dir, state)
@@ -250,6 +292,7 @@ def attempt_delivery_if_manifest_pass(run_dir: Path, intake: dict) -> dict | Non
         fallback = {
             "status": "DELIVERY_ERROR",
             "attempt_count": 0,
+            "provider_http_status": getattr(exc, "status", None),
             "sanitized_error_detail": _sanitize_error(exc),
         }
         _log_delivery(Path(run_dir).name, fallback)
