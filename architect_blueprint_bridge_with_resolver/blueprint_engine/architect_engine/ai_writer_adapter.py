@@ -3,6 +3,7 @@ from __future__ import annotations
 import json, os
 import re
 from concurrent.futures import ThreadPoolExecutor, as_completed
+from urllib.error import HTTPError
 from urllib.request import Request, urlopen
 
 from architect_engine.writer import SECTION_ORDER
@@ -83,6 +84,28 @@ def _word_count(section: dict) -> int:
     return len(re.findall(r"\b[\w’'-]+\b", section.get("content", "")))
 
 
+def _safe_422_detail(raw: bytes):
+    """Keep validation diagnostics while dropping fields that can echo request data."""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return "<non-JSON response body omitted>"
+
+    detail = payload.get("detail", payload) if isinstance(payload, dict) else payload
+    if isinstance(detail, list):
+        return [
+            {key: item[key] for key in ("loc", "msg", "type") if key in item}
+            if isinstance(item, dict) else str(item)
+            for item in detail
+        ]
+    if isinstance(detail, dict):
+        safe = {key: detail[key] for key in ("loc", "msg", "type", "error") if key in detail}
+        return safe or "<structured response detail omitted>"
+    if isinstance(detail, (str, int, float, bool)) or detail is None:
+        return detail
+    return str(detail)
+
+
 def _request_section_once(context, report_id, endpoint, token, title, draft=None):
     body=json.dumps({
         "contract":CONTRACT+"\n\n"+section_writing_rules(title)+"\n\n"+section_synthesis_rules(title)+"\n\n"+section_confidence_rules(title,context.get("mode"))+"\n\n"+section_emotional_rules(title)+"\n\n"+section_progression_rules(title),
@@ -95,8 +118,23 @@ def _request_section_once(context, report_id, endpoint, token, title, draft=None
     headers={"Content-Type":"application/json"}
     if token: headers["Authorization"]=f"Bearer {token}"
     req=Request(endpoint,data=body,headers=headers,method="POST")
-    with urlopen(req,timeout=300) as resp:
-        result=json.loads(resp.read().decode("utf-8"))
+    try:
+        with urlopen(req,timeout=300) as resp:
+            result=json.loads(resp.read().decode("utf-8"))
+    except HTTPError as exc:
+        if exc.code == 422:
+            diagnostic = {
+                "section": title,
+                "status": exc.code,
+                "detail": _safe_422_detail(exc.read()),
+                "attempt": "retry" if draft is not None else "first_draft",
+            }
+            print(
+                "AI_WRITER_VALIDATION_FAILURE "
+                + json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":")),
+                flush=True,
+            )
+        raise
     return _extract_section(result, title)
 
 
