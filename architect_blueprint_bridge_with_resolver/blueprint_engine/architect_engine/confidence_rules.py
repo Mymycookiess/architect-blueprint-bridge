@@ -95,22 +95,48 @@ def hedge_count(text):
     return len(re.findall(r"\b(?:may|might|could)\b",text or "",re.I))
 
 
+def repetitive_disclaimer_phrases(text):
+    return [
+        phrase for phrase in REPETITIVE_DISCLAIMERS
+        if re.search(re.escape(phrase), text or "", re.I)
+    ]
+
+
+def disclaimer_revision_instruction(text=""):
+    prohibited = ", ".join(f'"{phrase}"' for phrase in REPETITIVE_DISCLAIMERS)
+    instruction = (
+        "Do not use these disclaimer constructions anywhere in the section: "
+        f"{prohibited}. Use direct chart-supported description where no hedge is "
+        "needed. Where nuance is genuinely needed, use natural wording such as "
+        '"you may notice," "you may experience," "this pattern often shows up as," '
+        'or "this can feel like."'
+    )
+    found = repetitive_disclaimer_phrases(text)
+    if found:
+        identified = ", ".join(f'"{phrase}"' for phrase in found)
+        instruction += (
+            " The supplied draft failed disclaimer-language QA for: "
+            f"{identified}. Remove or rephrase every occurrence in the complete replacement."
+        )
+    return instruction
+
+
 def section_confidence_rules(title, mode):
     boundary=(
         "Include exactly one front-matter note beginning 'Chart scope:' that explains unknown birth time means Rising and houses are omitted."
         if mode=="PARTIAL" else
         "Include at most one brief front-matter statement distinguishing chart interpretation from fixed prediction."
     )
+    language_rule = disclaimer_revision_instruction()
     if title=="Welcome to Your Blueprint":
-        return boundary
-    return "State interpretations supported by validated chart facts directly and confidently. Do not repeat disclaimers or boundary language. Use a qualifier only for genuine ambiguity or tension. Continue to avoid prediction, guarantees, destiny, diagnosis, and certainty about future outcomes."
+        return boundary+" "+language_rule
+    return "State interpretations supported by validated chart facts directly and confidently. Do not repeat disclaimers or boundary language. Use a qualifier only for genuine ambiguity or tension. Continue to avoid prediction, guarantees, destiny, diagnosis, and certainty about future outcomes. "+language_rule
 
 
 def section_confidence_rule_issues(title, content, mode):
     issues=[]
-    for phrase in REPETITIVE_DISCLAIMERS:
-        if re.search(re.escape(phrase),content or "",re.I):
-            issues.append(f'Repetitive disclaimer phrase present: "{phrase}"')
+    for phrase in repetitive_disclaimer_phrases(content):
+        issues.append(f'Repetitive disclaimer phrase present: "{phrase}"')
     for phrase in PROHIBITED_CERTAINTY:
         if phrase.lower() in (content or "").lower():
             issues.append(f'Prohibited deterministic phrase present: "{phrase}"')

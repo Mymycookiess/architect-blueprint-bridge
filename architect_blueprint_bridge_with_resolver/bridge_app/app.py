@@ -27,7 +27,7 @@ ENGINE_ROOT = PACKAGE_ROOT / "blueprint_engine"
 if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 from architect_engine.content_rules import report_content_rule_issues, section_content_rule_issues
-from architect_engine.confidence_rules import report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
+from architect_engine.confidence_rules import disclaimer_revision_instruction, repetitive_disclaimer_phrases, report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
 from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 
@@ -712,10 +712,12 @@ def ai_writer(
         }
         revision_instruction = ""
         if payload.section_draft:
+            draft_content = str(payload.section_draft.get("content") or "")
             revision_instruction = f"""
 Revise and expand the supplied existing_section into a complete replacement.
 Preserve its grounded ideas, remove repetition, and reach the requested word
 target. Return the entire revised section, not an addendum.
+{disclaimer_revision_instruction(draft_content)}
 """
         section_payload = {
             "model": OPENAI_MODEL,
@@ -754,6 +756,20 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
         section = _call_openai(section_payload, "section")
         section["title"] = section_name
         section["section_id"] = section_name.lower().replace(" ", "_").replace("/", "_")
+        disclaimer_phrases = repetitive_disclaimer_phrases(section.get("content", ""))
+        if disclaimer_phrases:
+            correction_payload = dict(section_payload)
+            correction_payload["instructions"] = (
+                section_payload["instructions"]
+                + "\n"
+                + disclaimer_revision_instruction(section.get("content", ""))
+            )
+            correction_input = json.loads(section_payload["input"])
+            correction_input["existing_section"] = section
+            correction_payload["input"] = json.dumps(correction_input)
+            section = _call_openai(correction_payload, "section disclaimer revision")
+            section["title"] = section_name
+            section["section_id"] = section_name.lower().replace(" ", "_").replace("/", "_")
         if not set(section.get("evidence_refs", [])).issubset(set(allowed_section_refs)):
             raise HTTPException(
                 status_code=422,
