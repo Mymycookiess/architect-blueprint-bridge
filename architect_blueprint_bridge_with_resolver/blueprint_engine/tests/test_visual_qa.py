@@ -8,6 +8,36 @@ from architect_engine.renderer import _customer_text, render_pdf
 
 
 class VisualQATests(unittest.TestCase):
+    def test_customer_front_matter_and_finished_titles_are_rendered(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {
+                "name": "Paul Miller",
+                "birth_date": "1984-06-12",
+                "birth_time_local": "10:30",
+                "birth_time_status": "KNOWN",
+                "birth_location_display": "Oakland, California, USA",
+            },
+            "sections": [
+                {"title": "Personalized Cover", "status": "INCLUDED", "content": "Internal cover draft"},
+                {"title": "Birth Chart Snapshot", "status": "INCLUDED", "content": "**Sun:** Gemini."},
+                {"title": "Your First / Next Brick", "status": "INCLUDED", "content": "**BRICK ONE - START**\nChoose one action."},
+                {"title": "Your Next Chapter / Continue", "status": "INCLUDED", "content": "Return when your priorities change."},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.pdf"
+            _, diagnostics = render_pdf(payload, str(path), return_diagnostics=True)
+            text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        self.assertIn("YOUR BLUEPRINT JOURNEY", text)
+        self.assertIn("Birth Information Used for Your Blueprint", text)
+        self.assertIn("Paul Miller", text)
+        self.assertIn("YOUR NEXT BRICK", text)
+        self.assertIn("CONTINUE BUILDING", text)
+        self.assertNotIn("PERSONALIZED COVER", text)
+        self.assertNotIn("**", text)
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+
     def test_customer_pdf_embeds_spacing_safe_fonts(self):
         payload = {
             "mode": "FULL",

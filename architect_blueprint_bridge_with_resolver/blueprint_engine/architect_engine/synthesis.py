@@ -19,6 +19,7 @@ SECTION_FACTORS = {
     "Your Relationship Blueprint": ("venus", "mars", "moon", "rising", "saturn"),
     "Your Career & Purpose Blueprint": ("sun", "mercury", "mars", "jupiter", "saturn", "midheaven"),
     "Your Growth Blueprint": ("sun", "moon", "jupiter", "saturn"),
+    "Personalized Action Plan": ("sun", "moon", "mercury", "venus", "mars", "jupiter", "saturn", "rising"),
     "Your Blueprint Summary": ("sun", "moon", "rising", "mercury", "venus", "mars", "jupiter", "saturn", "midheaven"),
 }
 
@@ -28,6 +29,8 @@ SYNTHESIS_HEAVY_SECTIONS = set(SECTION_FACTORS)
 def section_synthesis_rules(title):
     if title=="Your Big Three":
         return "Integrate the validated Sun, Moon, and Rising as three interacting layers. In PARTIAL mode, integrate Sun and Moon only and never mention Rising or houses."
+    if title == "Personalized Action Plan":
+        return "Ground every strength, habit, pattern to watch, challenge, and Next Brick in the supplied action-plan synthesis_anchors. Integrate at least three exact validated sign-and-factor names and at least one supplied aspect when available. Convert each chart connection into an observable behavior; no generic self-improvement advice."
     if title in SYNTHESIS_HEAVY_SECTIONS:
         return "Use this section's synthesis_anchors to connect multiple materially relevant validated factors, including listed aspects or recurring patterns when present. Translate the connection into clear human meaning; do not list placements or reuse synthesis prose from another chapter."
     return "Keep the chapter centered on its main subject. Use at most one light cross-reference to another validated factor and save deeper whole-chart integration for later synthesis chapters."
@@ -42,6 +45,11 @@ def referenced_validated_factors(content, anchor):
 
 def section_synthesis_rule_issues(title, content, anchor):
     factors = anchor.get("factors", [])
+    if title == "Personalized Action Plan" and len(factors) >= 3:
+        referenced = referenced_validated_factors(content, anchor)
+        if len(referenced) < 3:
+            return ["Personalized Action Plan: fewer than three validated factors are integrated"]
+        return []
     if title in SYNTHESIS_HEAVY_SECTIONS and len(factors) >= 2:
         referenced = referenced_validated_factors(content, anchor)
         if len(referenced) < 2:
@@ -177,6 +185,15 @@ def render_synthesis_notes(section, anchors):
     elif section=="Your Growth Blueprint":
         names=[named(key) for key in ("sun","moon","jupiter","saturn") if named(key)]
         notes.append("Growth synthesis: "+", ".join(names[:-1])+f", and {names[-1]} connect who you are becoming, what steadies you emotionally, where you expand, and what asks for patient development.")
+    elif section=="Personalized Action Plan":
+        names=[named(key) for key in ("sun","moon","mercury","mars","saturn","rising") if named(key)]
+        selected=names[:4]
+        notes.append(
+            "Action-plan chart anchor: "
+            + ", ".join(selected[:-1])
+            + f", and {selected[-1]} must become specific strengths, repeatable habits, "
+              "patterns to watch, and a concrete Next Brick rather than generic advice."
+        )
     elif section=="Your Blueprint Summary":
         sun=named("sun"); moon=named("moon"); rising=named("rising")
         if sun and moon and rising:

@@ -2,10 +2,97 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pypdf import PdfReader
+
 from architect_engine.renderer import _customer_text, render_pdf
 
 
 class VisualQATests(unittest.TestCase):
+    def test_customer_front_matter_and_finished_titles_are_rendered(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {
+                "name": "Paul Miller",
+                "birth_date": "1984-06-12",
+                "birth_time_local": "10:30",
+                "birth_time_status": "KNOWN",
+                "birth_location_display": "Oakland, California, USA",
+            },
+            "sections": [
+                {"title": "Personalized Cover", "status": "INCLUDED", "content": "Internal cover draft"},
+                {"title": "Birth Chart Snapshot", "status": "INCLUDED", "content": "**Sun:** Gemini."},
+                {"title": "Your First / Next Brick", "status": "INCLUDED", "content": "**BRICK ONE - START**\nChoose one action."},
+                {"title": "Your Next Chapter / Continue", "status": "INCLUDED", "content": "Return when your priorities change."},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "report.pdf"
+            _, diagnostics = render_pdf(payload, str(path), return_diagnostics=True)
+            text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        self.assertIn("YOUR BLUEPRINT JOURNEY", text)
+        self.assertIn("Birth Information Used for Your Blueprint", text)
+        self.assertIn("Paul Miller", text)
+        self.assertIn("YOUR NEXT BRICK", text)
+        self.assertIn("CONTINUE BUILDING", text)
+        self.assertNotIn("PERSONALIZED COVER", text)
+        self.assertNotIn("**", text)
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+
+    def test_customer_pdf_embeds_spacing_safe_fonts(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {"name": "Paul Miller"},
+            "sections": [
+                {"title": "Welcome to Your Blueprint", "status": "INCLUDED", "content": "**Clear words** stay readable."},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "font-check.pdf"
+            render_pdf(payload, str(out))
+            reader = PdfReader(str(out))
+            extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
+            self.assertIn("Paul Miller", extracted)
+            self.assertNotIn("**", extracted)
+            base_fonts = set()
+            for page in reader.pages:
+                fonts = page["/Resources"].get("/Font", {})
+                for font_ref in fonts.values():
+                    font = font_ref.get_object()
+                    base_fonts.add(str(font.get("/BaseFont", "")))
+            self.assertTrue(any("Vera" in name for name in base_fonts), base_fonts)
+            self.assertFalse(any("Times" in name for name in base_fonts), base_fonts)
+
+    def test_markdown_qa_checks_rendered_pdf_not_source(self):
+        payload = {
+            "sections": [{
+                "title": "Personalized Action Plan",
+                "status": "INCLUDED",
+                "content": "**A bold heading** becomes real formatting.",
+            }]
+        }
+        with tempfile.TemporaryDirectory() as td:
+            _, diagnostics = render_pdf(
+                payload, str(Path(td) / "bold-check.pdf"), return_diagnostics=True
+            )
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+
+    def test_renderer_removes_unmatched_markdown_delimiter(self):
+        payload = {
+            "sections": [{
+                "title": "Personalized Action Plan",
+                "status": "INCLUDED",
+                "content": "A broken **bold marker remains visible.",
+            }]
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "broken-bold-check.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            extracted = "\n".join(
+                page.extract_text() or "" for page in PdfReader(out).pages
+            )
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+        self.assertNotIn("**", extracted)
+
     def test_customer_labels_are_removed_without_removing_chart_fact(self):
         self.assertEqual(
             _customer_text("Verified chart note — Sun: Scorpio — House 2."),

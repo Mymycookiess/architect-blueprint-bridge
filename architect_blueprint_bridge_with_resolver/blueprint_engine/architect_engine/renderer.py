@@ -12,6 +12,7 @@ from reportlab.lib.styles import ParagraphStyle
 from reportlab.lib.units import inch
 from reportlab.platypus import (
     BaseDocTemplate,
+    CondPageBreak,
     Frame,
     HRFlowable,
     KeepTogether,
@@ -77,9 +78,44 @@ JOURNEY = (
     ("DISCOVER", "Welcome to Your Blueprint", "Birth Chart Snapshot"),
     ("UNDERSTAND", "Your Core Identity - Sun", "Your Emotional World - Moon", "How the World Meets You - Rising", "Your Big Three", "Your Houses / Life Areas", "Your Inner Wiring"),
     ("REFLECT", "Your Relationship Blueprint", "Your Career & Purpose Blueprint", "Your Growth Blueprint"),
-    ("BUILD", "Alignment & Action", "Personalized Action Plan", "Your First / Next Brick"),
-    ("CONTINUE", "Your Blueprint Summary", "Your Next Chapter / Continue"),
+    ("BUILD", "Alignment & Action", "Your Personalized Action Plan", "Your Next Brick"),
+    ("CONTINUE", "Your Blueprint Summary", "Continue Building"),
 )
+
+DISPLAY_TITLES = {
+    "Your First / Next Brick": "Your Next Brick",
+    "Your Next Chapter / Continue": "Continue Building",
+}
+
+CHAPTER_STAGES = {
+    "Welcome to Your Blueprint": "DISCOVER",
+    "Birth Chart Snapshot": "DISCOVER",
+    "Your Story Begins Here": "UNDERSTAND",
+    "Your Core Identity — Sun": "UNDERSTAND",
+    "Your Emotional World — Moon": "UNDERSTAND",
+    "How the World Meets You — Rising": "UNDERSTAND",
+    "Your Big Three": "UNDERSTAND",
+    "Your Houses / Life Areas": "UNDERSTAND",
+    "Your Inner Wiring": "UNDERSTAND",
+    "Your Relationship Blueprint": "REFLECT",
+    "Your Career & Purpose Blueprint": "REFLECT",
+    "Your Growth Blueprint": "REFLECT",
+    "Alignment & Action": "BUILD",
+    "Personalized Action Plan": "BUILD",
+    "Your First / Next Brick": "BUILD",
+    "Your Blueprint Summary": "CONTINUE",
+    "Your Next Chapter / Continue": "CONTINUE",
+}
+
+MAJOR_SECTION_STARTS = {
+    "Welcome to Your Blueprint",
+    "Your Story Begins Here",
+    "Your Relationship Blueprint",
+    "Your Career & Purpose Blueprint",
+    "Your Growth Blueprint",
+    "Alignment & Action",
+    "Your Blueprint Summary",
+}
 
 
 def _customer_text(text: str) -> str:
@@ -87,6 +123,7 @@ def _customer_text(text: str) -> str:
     cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
     for pattern in INTERNAL_PREFIXES:
         cleaned = re.sub(r"^" + pattern, "", cleaned, flags=re.I)
+    cleaned = re.sub(r"\bBottom quote\s*[:—-]\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
 
@@ -124,6 +161,7 @@ def _styles():
         "cover_sub": ParagraphStyle("cover_sub", fontName="BlueprintSans", fontSize=12.2, leading=17, textColor=MUTED, alignment=TA_CENTER, spaceAfter=26),
         "cover_name": ParagraphStyle("cover_name", fontName="BlueprintSans-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
         "chapter": ParagraphStyle("chapter", fontName="BlueprintSans-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, keepWithNext=True, spaceAfter=8),
+        "chapter_stage": ParagraphStyle("chapter_stage", fontName="BlueprintSans-Bold", fontSize=8.8, leading=11, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=7),
         "chapter_rule": ParagraphStyle("chapter_rule", fontName="BlueprintSans", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
         "heading": ParagraphStyle("heading", fontName="BlueprintSans-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
         "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
@@ -204,6 +242,12 @@ class BlueprintDocTemplate(BaseDocTemplate):
         canv.saveState()
         canv.setFillColor(BG)
         canv.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+        if doc.page == 1:
+            canv.setStrokeColor(GOLD)
+            canv.setLineWidth(1.0)
+            canv.rect(0.42 * inch, 0.42 * inch, PAGE_W - 0.84 * inch, PAGE_H - 0.84 * inch, fill=0, stroke=1)
+            canv.setLineWidth(0.35)
+            canv.rect(0.50 * inch, 0.50 * inch, PAGE_W - inch, PAGE_H - inch, fill=0, stroke=1)
         if doc.page > 1:
             canv.setStrokeColor(RULE)
             canv.setLineWidth(0.45)
@@ -264,11 +308,19 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         title = str(section.get("title") or "").strip()
         if title.upper() in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER"):
             continue
-        if story and not isinstance(story[-1], PageBreak):
-            story.append(PageBreak())
+        if title in MAJOR_SECTION_STARTS:
+            if story and not isinstance(story[-1], PageBreak):
+                story.append(PageBreak())
+        else:
+            # Start a shorter companion section on the current page when there
+            # is enough room for its heading and a meaningful opening passage.
+            # This avoids nearly empty continuation pages without crowding.
+            story.append(CondPageBreak(2.55 * inch))
+        display_title = DISPLAY_TITLES.get(title, title)
         story.extend([
             Spacer(1, 0.22 * inch),
-            Paragraph(_safe_markup(title.upper()), styles["chapter"]),
+            Paragraph(CHAPTER_STAGES.get(title, "YOUR BLUEPRINT"), styles["chapter_stage"]),
+            Paragraph(_safe_markup(display_title.upper()), styles["chapter"]),
             HRFlowable(width=0.55 * inch, thickness=0.7, color=GOLD, spaceBefore=0, spaceAfter=18, hAlign="CENTER"),
         ])
         if title == "Birth Chart Snapshot":
@@ -303,8 +355,6 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
                 grouped.append(current)
                 i += 1
         story.extend(grouped)
-        if idx < len(included_sections) - 1:
-            story.append(PageBreak())
 
     doc.build(story)
 
@@ -319,8 +369,8 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "blank_pages": [],
         "orphaned_headings": [],
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
-        "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", visible, re.I)),
-        "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", visible, re.I))),
+        "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", rendered_text, re.I)),
+        "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", rendered_text, re.I))),
         "markdown_bold_markers": bool(re.search(r"\*\*|__", rendered_text)),
         "page_body_lines": [],
     }

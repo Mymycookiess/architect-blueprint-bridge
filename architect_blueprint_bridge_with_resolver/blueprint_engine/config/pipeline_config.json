@@ -10,7 +10,7 @@
     "background_hex": "#FAF9F6",
     "ink_hex": "#141414",
     "page_size": "LETTER",
-    "mode_full_page_min": 30,
+    "mode_full_page_min": 24,
     "mode_full_page_max": 45,
     "mode_partial_page_min": 24,
     "mode_partial_page_max": 36
