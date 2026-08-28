@@ -301,6 +301,11 @@ def compose_report(context: dict, report_id: str) -> dict:
         "context_version":context["context_version"],
         "mode":context["mode"],
         "customer":context["customer"],
+        "chart_summary": {
+            "sun": context.get("chart_facts", {}).get("placements", {}).get("sun", {}),
+            "moon": context.get("chart_facts", {}).get("placements", {}).get("moon", {}),
+            "rising": context.get("chart_facts", {}).get("angles", {}).get("ascendant", {}),
+        },
         "sections":sections,
         "qa":{"source_boundary":"LOCKED_TO_CONTEXT","new_astrology_added":False}
     }

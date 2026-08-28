@@ -187,7 +187,13 @@ def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_e
     report={
         "report_id":report_id,"schema_version":"blueprint_report_v1",
         "context_version":context["context_version"],"mode":context["mode"],
-        "customer":context["customer"],"sections":generated,
+        "customer":context["customer"],
+        "chart_summary": {
+            "sun": context.get("chart_facts", {}).get("placements", {}).get("sun", {}),
+            "moon": context.get("chart_facts", {}).get("placements", {}).get("moon", {}),
+            "rising": context.get("chart_facts", {}).get("angles", {}).get("ascendant", {}),
+        },
+        "sections":generated,
         "qa":{"source_boundary":"LOCKED_TO_CONTEXT","new_astrology_added":False},
     }
     issues=report_emotional_rule_issues(report)

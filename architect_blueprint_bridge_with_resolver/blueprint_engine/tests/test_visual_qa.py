@@ -4,7 +4,7 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from architect_engine.renderer import _customer_text, render_pdf
+from architect_engine.renderer import _customer_text, _display_birth_location, render_pdf
 
 
 class VisualQATests(unittest.TestCase):
@@ -66,6 +66,53 @@ class VisualQATests(unittest.TestCase):
         self.assertNotIn("clarity-not", text)
         self.assertEqual(diagnostics["joined_dash_words"], [])
 
+    def test_single_markdown_emphasis_is_rendered_and_not_visible(self):
+        payload = {
+            "customer": {"name": "Paul Miller"},
+            "sections": [{
+                "title": "Your Next Chapter / Continue",
+                "status": "INCLUDED",
+                "content": "Ask: *What structure would help this effort last?*",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "italic-check.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            extracted = "\n".join(page.extract_text() or "" for page in PdfReader(out).pages)
+        self.assertNotIn("*", extracted)
+        self.assertFalse(diagnostics["markdown_emphasis_markers"])
+
+    def test_big_three_glance_and_customer_friendly_location(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {
+                "name": "Elizabeth Hunter",
+                "birth_date": "1998-04-04",
+                "birth_time_local": "19:53",
+                "birth_time_status": "KNOWN",
+                "birth_location_display": "Las Vegas USA",
+            },
+            "chart_summary": {
+                "sun": {"sign": "Aries", "house": 6},
+                "moon": {"sign": "Leo", "house": 9},
+                "rising": {"sign": "Scorpio"},
+            },
+            "sections": [{
+                "title": "Birth Chart Snapshot",
+                "status": "INCLUDED",
+                "content": "These placements form the foundation of your Blueprint.",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "big-three-check.pdf"
+            render_pdf(payload, str(out))
+            extracted = "\n".join(page.extract_text() or "" for page in PdfReader(out).pages)
+        self.assertEqual(_display_birth_location("Las Vegas USA"), "Las Vegas, Nevada, USA")
+        self.assertIn("Your Big Three at a Glance", extracted)
+        self.assertIn("Aries · House 6", extracted)
+        self.assertIn("Leo · House 9", extracted)
+        self.assertIn("Scorpio", extracted)
+
     def test_major_chapters_share_a_page_when_space_is_available(self):
         payload = {
             "customer": {"name": "Paul Miller"},
@@ -124,6 +171,7 @@ class VisualQATests(unittest.TestCase):
                 payload, str(Path(td) / "bold-check.pdf"), return_diagnostics=True
             )
         self.assertFalse(diagnostics["markdown_bold_markers"])
+        self.assertFalse(diagnostics["markdown_emphasis_markers"])
 
     def test_renderer_removes_unmatched_markdown_delimiter(self):
         payload = {
@@ -166,10 +214,32 @@ class VisualQATests(unittest.TestCase):
             )
         self.assertGreaterEqual(pages, 1)
         self.assertEqual(diagnostics["blank_pages"], [])
+        self.assertEqual(diagnostics["sparse_pages"], [])
         self.assertEqual(diagnostics["orphaned_headings"], [])
         self.assertEqual(diagnostics["unresolved_placeholders"], [])
         self.assertEqual(diagnostics["internal_terms"], [])
         self.assertEqual(diagnostics["raw_orb_values"], [])
+
+    def test_continue_chapter_does_not_leave_a_sparse_final_page(self):
+        payload = {
+            "customer": {"name": "Elizabeth Hunter"},
+            "sections": [
+                {
+                    "title": "Your Blueprint Summary",
+                    "status": "INCLUDED",
+                    "content": "Your summary carries the central pattern forward. " * 75,
+                },
+                {
+                    "title": "Your Next Chapter / Continue",
+                    "status": "INCLUDED",
+                    "content": "Continue building with awareness and steady structure. " * 58,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "balanced-ending.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+        self.assertEqual(diagnostics["sparse_pages"], [])
 
     def test_keep_with_next_survives_page_balancing(self):
         payload={"sections":[{"title":"Relationship","status":"INCLUDED","content":

@@ -337,6 +337,13 @@ def resolve_location(intake: dict) -> dict:
     intake["latitude"] = resolved.get("latitude")
     intake["longitude"] = resolved.get("longitude")
     intake["timezone_offset"] = resolved.get("timezone_offset")
+    resolved_parts = [
+        resolved.get("resolved_name"),
+        resolved.get("resolved_admin1"),
+        resolved.get("resolved_country"),
+    ]
+    if all(resolved_parts):
+        intake["birth_location"] = ", ".join(str(part).strip() for part in resolved_parts)
     return intake
 
 

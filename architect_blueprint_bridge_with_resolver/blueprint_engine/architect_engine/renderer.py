@@ -116,6 +116,7 @@ MAJOR_SECTION_STARTS = {
     "Your Growth Blueprint",
     "Alignment & Action",
     "Your Blueprint Summary",
+    "Your Next Chapter / Continue",
 }
 
 ACTION_PLAN_HEADINGS = {
@@ -148,9 +149,11 @@ def _safe_markup(text: str) -> str:
     text = html.escape(text, quote=False)
     text = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", text)
+    text = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", text)
+    text = re.sub(r"(?<!_)_([^_\n]+?)_(?!_)", r"<i>\1</i>", text)
     # Remove unmatched emphasis delimiters after valid pairs have become real
     # PDF bold formatting. A bare delimiter has no customer-facing meaning.
-    text = text.replace("**", "").replace("__", "")
+    text = text.replace("**", "").replace("__", "").replace("*", "")
     return text
 
 
@@ -179,14 +182,17 @@ def _styles():
         "chapter_rule": ParagraphStyle("chapter_rule", fontName="BlueprintSans", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
         "heading": ParagraphStyle("heading", fontName="BlueprintSans-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
         "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
-        "closing_body": ParagraphStyle("closing_body", fontName="BlueprintSans", fontSize=9.95, leading=14.2, textColor=INK, alignment=TA_LEFT, spaceAfter=6.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "closing_body": ParagraphStyle("closing_body", fontName="BlueprintSans", fontSize=10.55, leading=14.2, textColor=INK, alignment=TA_LEFT, spaceAfter=6.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
         "list": ParagraphStyle("list", parent=None, fontName="BlueprintSans", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
         "action_heading": ParagraphStyle("action_heading", fontName="BlueprintSans-Bold", fontSize=11.3, leading=14.5, textColor=GOLD, backColor=colors.HexColor("#F1EEE7"), borderColor=RULE, borderWidth=0.45, borderPadding=(6, 8, 6, 8), spaceBefore=10, spaceAfter=7, keepWithNext=True),
+        "action_item": ParagraphStyle("action_item", fontName="BlueprintSans", fontSize=10.35, leading=15.1, textColor=INK, alignment=TA_LEFT, spaceAfter=10.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
         "journey_title": ParagraphStyle("journey_title", fontName="BlueprintSans-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
         "journey_stage": ParagraphStyle("journey_stage", fontName="BlueprintSans-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
         "journey_body": ParagraphStyle("journey_body", fontName="BlueprintSans", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
         "birth_label": ParagraphStyle("birth_label", fontName="BlueprintSans-Bold", fontSize=9.6, leading=12, textColor=MUTED),
         "birth_value": ParagraphStyle("birth_value", fontName="BlueprintSans", fontSize=10.2, leading=13, textColor=INK),
+        "big_three_label": ParagraphStyle("big_three_label", fontName="BlueprintSans-Bold", fontSize=8.8, leading=11, textColor=GOLD, alignment=TA_CENTER, spaceAfter=3),
+        "big_three_value": ParagraphStyle("big_three_value", fontName="BlueprintSans-Bold", fontSize=12.2, leading=15, textColor=INK, alignment=TA_CENTER),
     }
 
 
@@ -226,8 +232,44 @@ def _display_birth_location(value) -> str:
     if match:
         city = match.group(1).strip(" ,").title() if match.group(1).islower() else match.group(1).strip(" ,")
         return f"{city}, California, USA"
+    # Older storefront orders sometimes supplied only city + country. Preserve
+    # the customer's words while polishing the common US locations we can
+    # identify unambiguously.
+    city_country = re.match(r"^(Las Vegas)(?:,|\s)+(USA|US|United States)$", raw, re.I)
+    if city_country:
+        return "Las Vegas, Nevada, USA"
     polished = raw.title() if raw.islower() or raw.isupper() else raw
     return re.sub(r"\bUsa\b", "USA", polished)
+
+
+def _big_three_rows(payload: dict, styles: dict):
+    summary = payload.get("chart_summary") or {}
+    items = []
+    for label, key in (("SUN", "sun"), ("MOON", "moon"), ("RISING", "rising")):
+        placement = summary.get(key) or {}
+        sign = str(placement.get("sign") or "").strip()
+        if not sign:
+            continue
+        house = placement.get("house")
+        value = f"{sign} · House {house}" if house else sign
+        items.append([
+            Paragraph(label, styles["big_three_label"]),
+            Paragraph(_safe_markup(value), styles["big_three_value"]),
+        ])
+    if len(items) != 3:
+        return None
+    table = Table([items], colWidths=[BODY_WIDTH / 3] * 3, hAlign="LEFT")
+    table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.55, RULE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.35, RULE),
+        ("BACKGROUND", (0, 0), (-1, -1), colors.HexColor("#F7F4ED")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 7),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 7),
+        ("TOPPADDING", (0, 0), (-1, -1), 9),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 9),
+    ]))
+    return table
 
 
 def _birth_rows(payload: dict, styles: dict):
@@ -261,8 +303,20 @@ def _content_flowables(content: str, styles: dict, section_title: str = ""):
         def flush_body():
             if body_buffer:
                 text = " ".join(body_buffer)
-                style = styles["closing_body"] if section_title == "Your Next Chapter / Continue" else styles["body"]
-                flow.append(Paragraph(_safe_markup(text), style))
+                if section_title == "Personalized Action Plan":
+                    match = re.match(
+                        r"^((?:\d+[.)]\s*)?(?:Strength|Supporting habit|Pattern to watch|Challenge|Encouraging message|Next Brick):)\s*(.*)$",
+                        text,
+                        re.I,
+                    )
+                    if match:
+                        markup = f"<b>{_safe_markup(match.group(1))}</b> {_safe_markup(match.group(2))}"
+                        flow.append(Paragraph(markup, styles["action_item"]))
+                    else:
+                        flow.append(Paragraph(_safe_markup(text), styles["action_item"]))
+                else:
+                    style = styles["closing_body"] if section_title == "Your Next Chapter / Continue" else styles["body"]
+                    flow.append(Paragraph(_safe_markup(text), style))
                 body_buffer.clear()
 
         for line in lines:
@@ -378,7 +432,13 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         # Start chapters on the current page when there is room for the complete
         # title treatment and a meaningful opening passage. This keeps the
         # luxury transitions while preventing half-empty ending pages.
-        minimum_opening = 3.30 * inch if title in MAJOR_SECTION_STARTS else 2.45 * inch
+        minimum_opening = (
+            6.70 * inch
+            if title == "Your Next Chapter / Continue"
+            else 3.30 * inch
+            if title in MAJOR_SECTION_STARTS
+            else 2.45 * inch
+        )
         story.append(CondPageBreak(minimum_opening))
         display_title = DISPLAY_TITLES.get(title, title)
         story.extend([
@@ -406,6 +466,13 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
                     birth_table,
                     Spacer(1, 0.18 * inch),
                 ])
+                big_three = _big_three_rows(payload, styles)
+                if big_three is not None:
+                    story.extend([
+                        Paragraph("Your Big Three at a Glance", styles["heading"]),
+                        big_three,
+                        Spacer(1, 0.18 * inch),
+                    ])
         flow = _content_flowables(str(section.get("content") or ""), styles, title)
         # Keep headings with the paragraph that follows them whenever possible.
         grouped = []
@@ -429,12 +496,17 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
 
     visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
-        "blank_pages": [],
+        "blank_pages": [i for i, page in enumerate(rendered_pages, 1) if not page.strip()],
+        "sparse_pages": [
+            i for i, page in enumerate(rendered_pages, 1)
+            if i > 1 and len(re.findall(r"\b\w+\b", page)) < 40
+        ],
         "orphaned_headings": [],
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", rendered_text, re.I)),
         "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", rendered_text, re.I))),
         "markdown_bold_markers": bool(re.search(r"\*\*|__", rendered_text)),
+        "markdown_emphasis_markers": bool(re.search(r"(?<!\*)\*[^*\n]+\*(?!\*)|(?<!_)_[^_\n]+_(?!_)", rendered_text)),
         "joined_dash_words": sorted(word for word in set(re.findall(r"\b[A-Za-z]+-[A-Za-z]+\b", rendered_text))
             if word not in {
                 "self-expression", "well-being", "self-definition", "self-understanding",
