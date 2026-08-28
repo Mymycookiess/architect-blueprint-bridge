@@ -347,6 +347,30 @@ def write_status(run_dir: Path, status: str, detail: str = "") -> None:
     print(f"BLUEPRINT_STATUS run={run_dir.name} status={status} detail={detail}", flush=True)
 
 
+def _relay_ai_writer_validation_failures(engine_stdout: str) -> None:
+    """Relay only sanitized AI-writer validation diagnostics to service stdout."""
+    prefix = "AI_WRITER_VALIDATION_FAILURE "
+    for line in (engine_stdout or "").splitlines():
+        if not line.startswith(prefix):
+            continue
+        try:
+            source = json.loads(line[len(prefix):])
+        except (json.JSONDecodeError, TypeError):
+            continue
+        if not isinstance(source, dict) or source.get("status") != 422:
+            continue
+        diagnostic = {
+            "section": source.get("section"),
+            "status": 422,
+            "detail": source.get("detail"),
+            "attempt": source.get("attempt"),
+        }
+        print(
+            prefix + json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":")),
+            flush=True,
+        )
+
+
 def _keep_render_awake(stop_event: threading.Event) -> None:
     """Keep a long Blueprint job alive on Render's free web-service tier."""
     service_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
@@ -447,6 +471,7 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             timeout=3600,
         )
 
+        _relay_ai_writer_validation_failures(completed.stdout)
         (run_dir / "engine_stdout.txt").write_text(completed.stdout or "")
         (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
