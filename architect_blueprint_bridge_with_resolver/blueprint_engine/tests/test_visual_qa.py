@@ -2,10 +2,36 @@ import tempfile
 import unittest
 from pathlib import Path
 
+from pypdf import PdfReader
+
 from architect_engine.renderer import _customer_text, render_pdf
 
 
 class VisualQATests(unittest.TestCase):
+    def test_customer_pdf_embeds_spacing_safe_fonts(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {"name": "Paul Miller"},
+            "sections": [
+                {"title": "Welcome to Your Blueprint", "status": "INCLUDED", "content": "**Clear words** stay readable."},
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "font-check.pdf"
+            render_pdf(payload, str(out))
+            reader = PdfReader(str(out))
+            extracted = "\n".join(page.extract_text() or "" for page in reader.pages)
+            self.assertIn("Paul Miller", extracted)
+            self.assertNotIn("**", extracted)
+            base_fonts = set()
+            for page in reader.pages:
+                fonts = page["/Resources"].get("/Font", {})
+                for font_ref in fonts.values():
+                    font = font_ref.get_object()
+                    base_fonts.add(str(font.get("/BaseFont", "")))
+            self.assertTrue(any("Vera" in name for name in base_fonts), base_fonts)
+            self.assertFalse(any("Times" in name for name in base_fonts), base_fonts)
+
     def test_customer_labels_are_removed_without_removing_chart_fact(self):
         self.assertEqual(
             _customer_text("Verified chart note — Sun: Scorpio — House 2."),

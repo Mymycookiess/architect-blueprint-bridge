@@ -1,8 +1,10 @@
 from __future__ import annotations
 
 import html
+import os
 import re
 
+import reportlab
 from reportlab.lib import colors
 from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import letter
@@ -11,6 +13,7 @@ from reportlab.lib.units import inch
 from reportlab.platypus import (
     BaseDocTemplate,
     Frame,
+    HRFlowable,
     KeepTogether,
     PageBreak,
     PageTemplate,
@@ -19,6 +22,16 @@ from reportlab.platypus import (
     Table,
     TableStyle,
 )
+from reportlab.pdfbase import pdfmetrics
+from reportlab.pdfbase.ttfonts import TTFont
+
+
+# ReportLab's built-in Type 1 fonts rendered with broken character spacing in
+# production PDFs. Vera ships with ReportLab, so it is available in the same
+# container everywhere and can be embedded in every customer document.
+_REPORTLAB_FONT_DIR = os.path.join(os.path.dirname(reportlab.__file__), "fonts")
+pdfmetrics.registerFont(TTFont("BlueprintSans", os.path.join(_REPORTLAB_FONT_DIR, "Vera.ttf")))
+pdfmetrics.registerFont(TTFont("BlueprintSans-Bold", os.path.join(_REPORTLAB_FONT_DIR, "VeraBd.ttf")))
 
 BG = colors.HexColor("#FAF9F6")
 INK = colors.HexColor("#171717")
@@ -102,20 +115,20 @@ def _clean_list_prefix(line: str) -> str:
 
 def _styles():
     return {
-        "cover_brand": ParagraphStyle("cover_brand", fontName="Times-Bold", fontSize=12, leading=15, textColor=GOLD, alignment=TA_CENTER, spaceAfter=18),
-        "cover_title": ParagraphStyle("cover_title", fontName="Times-Bold", fontSize=28, leading=32, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
-        "cover_sub": ParagraphStyle("cover_sub", fontName="Times-Roman", fontSize=12.2, leading=17, textColor=MUTED, alignment=TA_CENTER, spaceAfter=26),
-        "cover_name": ParagraphStyle("cover_name", fontName="Times-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
-        "chapter": ParagraphStyle("chapter", fontName="Times-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, keepWithNext=True, spaceAfter=8),
-        "chapter_rule": ParagraphStyle("chapter_rule", fontName="Times-Roman", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
-        "heading": ParagraphStyle("heading", fontName="Times-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
-        "body": ParagraphStyle("body", fontName="Times-Roman", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
-        "list": ParagraphStyle("list", parent=None, fontName="Times-Roman", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
-        "journey_title": ParagraphStyle("journey_title", fontName="Times-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
-        "journey_stage": ParagraphStyle("journey_stage", fontName="Times-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
-        "journey_body": ParagraphStyle("journey_body", fontName="Times-Roman", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
-        "birth_label": ParagraphStyle("birth_label", fontName="Times-Bold", fontSize=9.6, leading=12, textColor=MUTED),
-        "birth_value": ParagraphStyle("birth_value", fontName="Times-Roman", fontSize=10.2, leading=13, textColor=INK),
+        "cover_brand": ParagraphStyle("cover_brand", fontName="BlueprintSans-Bold", fontSize=12, leading=15, textColor=GOLD, alignment=TA_CENTER, spaceAfter=18),
+        "cover_title": ParagraphStyle("cover_title", fontName="BlueprintSans-Bold", fontSize=28, leading=34, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
+        "cover_sub": ParagraphStyle("cover_sub", fontName="BlueprintSans", fontSize=12.2, leading=17, textColor=MUTED, alignment=TA_CENTER, spaceAfter=26),
+        "cover_name": ParagraphStyle("cover_name", fontName="BlueprintSans-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
+        "chapter": ParagraphStyle("chapter", fontName="BlueprintSans-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, keepWithNext=True, spaceAfter=8),
+        "chapter_rule": ParagraphStyle("chapter_rule", fontName="BlueprintSans", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
+        "heading": ParagraphStyle("heading", fontName="BlueprintSans-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
+        "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "list": ParagraphStyle("list", parent=None, fontName="BlueprintSans", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
+        "journey_title": ParagraphStyle("journey_title", fontName="BlueprintSans-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
+        "journey_stage": ParagraphStyle("journey_stage", fontName="BlueprintSans-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
+        "journey_body": ParagraphStyle("journey_body", fontName="BlueprintSans", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
+        "birth_label": ParagraphStyle("birth_label", fontName="BlueprintSans-Bold", fontSize=9.6, leading=12, textColor=MUTED),
+        "birth_value": ParagraphStyle("birth_value", fontName="BlueprintSans", fontSize=10.2, leading=13, textColor=INK),
     }
 
 
@@ -192,7 +205,7 @@ class BlueprintDocTemplate(BaseDocTemplate):
             canv.setLineWidth(0.45)
             canv.line(LEFT, 34, PAGE_W - RIGHT, 34)
             canv.setFillColor(MUTED)
-            canv.setFont("Times-Roman", 7.2)
+            canv.setFont("BlueprintSans", 7.2)
             canv.drawString(LEFT, 20, "THE ARCHITECT BLUEPRINT")
             canv.drawRightString(PAGE_W - RIGHT, 20, str(doc.page - 1))
         canv.restoreState()
@@ -214,7 +227,7 @@ def _cover_story(payload: dict, styles: dict):
 
 
 def _journey_story(styles: dict):
-    story = [Spacer(1, 0.25 * inch), Paragraph("YOUR BLUEPRINT JOURNEY", styles["journey_title"]), Paragraph("DISCOVER  →  UNDERSTAND  →  REFLECT  →  BUILD  →  CONTINUE", styles["cover_sub"]), Spacer(1, 0.12 * inch)]
+    story = [Spacer(1, 0.25 * inch), Paragraph("YOUR BLUEPRINT JOURNEY", styles["journey_title"]), Paragraph("DISCOVER  -  UNDERSTAND  -  REFLECT  -  BUILD  -  CONTINUE", styles["cover_sub"]), Spacer(1, 0.12 * inch)]
     rows = []
     for stage in JOURNEY:
         stage_name, *chapters = stage
@@ -222,7 +235,7 @@ def _journey_story(styles: dict):
             Paragraph(stage_name, styles["journey_stage"]),
             Paragraph("<br/>".join(html.escape(ch) for ch in chapters), styles["journey_body"]),
         ])
-    table = Table(rows, colWidths=[1.2 * inch, BODY_WIDTH - 1.2 * inch], hAlign="CENTER")
+    table = Table(rows, colWidths=[1.55 * inch, BODY_WIDTH - 1.55 * inch], hAlign="CENTER")
     table.setStyle(TableStyle([
         ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
         ("LINEBELOW", (0, 0), (-1, -2), 0.45, RULE),
@@ -252,7 +265,7 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         story.extend([
             Spacer(1, 0.22 * inch),
             Paragraph(_safe_markup(title.upper()), styles["chapter"]),
-            Paragraph("◆", styles["chapter_rule"]),
+            HRFlowable(width=0.55 * inch, thickness=0.7, color=GOLD, spaceBefore=0, spaceAfter=18, hAlign="CENTER"),
         ])
         if title == "Birth Chart Snapshot":
             rows = _birth_rows(payload, styles)
@@ -298,7 +311,7 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", visible, re.I)),
         "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", visible, re.I))),
-        "markdown_bold_markers": bool(re.search(r"\*\*[^*]+\*\*|__[^_]+__", visible)),
+        "markdown_bold_markers": bool(re.search(r"\*\*[^*]+\*\*|__[^_]+__", _safe_markup(visible))),
         "page_body_lines": [],
     }
     page_no = max(1, getattr(doc, "_blueprint_page_count", 1))

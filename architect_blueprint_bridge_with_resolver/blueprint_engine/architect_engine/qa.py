@@ -89,6 +89,7 @@ def run_qa(chart, selector, context, report, config, rendered_pages=None, render
             ("unresolved_placeholders", "Unresolved placeholders"),
             ("internal_terms", "Customer-facing internal terms"),
             ("raw_orb_values", "Raw aspect orb values in customer prose"),
+            ("markdown_bold_markers", "Unconverted Markdown bold markers"),
         ):
             if render_diagnostics.get(key):
                 issues.append(f"{label}: {render_diagnostics[key]}")
