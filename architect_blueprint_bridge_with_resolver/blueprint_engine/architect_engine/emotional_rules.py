@@ -10,6 +10,12 @@ EMOTIONAL_SECTIONS = (
     "Your Growth Blueprint",
     "Your Blueprint Summary",
 )
+SYNTHESIS_EMOTIONAL_SECTIONS = (
+    "Your Inner Wiring",
+    "Your Relationship Blueprint",
+    "Your Career & Purpose Blueprint",
+    "Your Growth Blueprint",
+)
 EXPERIENTIAL_MARKERS = (
     "feel", "need", "safe", "seen", "understood", "misunderstood",
     "pressure", "stress", "protect", "hide", "trust", "boundary",
@@ -39,9 +45,15 @@ def section_emotional_rules(title):
 
 
 def section_emotional_revision_instruction(title, content=""):
-    if title != "Your Inner Wiring":
+    if title not in SYNTHESIS_EMOTIONAL_SECTIONS:
         return ""
-    instruction = """Write Your Inner Wiring as recognizable lived experience, not a trait list. Weave the validated factors naturally into how the person notices an internal reaction, responds when stressed or guarded, makes a conflicted decision, protects a need, or seeks security in relationship. Include several concrete emotional and behavioral signals in connected prose, using direct personalized language such as “you notice,” “you feel,” “you protect,” “you respond,” or “you decide” where supported. Do not turn these signals into a checklist, and do not invent a trigger, coping response, relationship history, diagnosis, or life event beyond the supplied context."""
+    life_area = {
+        "Your Inner Wiring": "inner reactions, guarded moments, and conflicted decisions",
+        "Your Relationship Blueprint": "trust, boundaries, closeness, and relationship choices",
+        "Your Career & Purpose Blueprint": "work pressure, fulfillment, decisions, and visible effort",
+        "Your Growth Blueprint": "discomfort, coping patterns, security, and growth choices",
+    }[title]
+    instruction = f"""Write {title} as recognizable lived experience, not a trait list. Weave the validated factors naturally into {life_area}. Show what the person notices internally and how that pattern affects a response, choice, boundary, coping tendency, or behavior under pressure where the supplied factors support it. Include several concrete emotional and behavioral signals in connected prose, using direct personalized language such as “you notice,” “you feel,” “you protect,” “you respond,” or “you decide” where supported. Do not turn these signals into a checklist, and do not invent a trigger, coping response, relationship history, diagnosis, or life event beyond the supplied context."""
     if content and any(
         "insufficient concrete emotional/behavioral language" in issue
         for issue in section_emotional_rule_issues(title, content)

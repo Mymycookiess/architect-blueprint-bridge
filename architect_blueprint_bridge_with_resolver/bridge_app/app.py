@@ -28,7 +28,7 @@ if str(ENGINE_ROOT) not in sys.path:
     sys.path.insert(0, str(ENGINE_ROOT))
 from architect_engine.content_rules import report_content_rule_issues, section_content_rule_issues
 from architect_engine.confidence_rules import disclaimer_revision_instruction, repetitive_disclaimer_phrases, report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
-from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_revision_instruction, section_emotional_rule_issues, section_emotional_rules
+from architect_engine.emotional_rules import SYNTHESIS_EMOTIONAL_SECTIONS, report_emotional_rule_issues, section_emotional_revision_instruction, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
@@ -894,11 +894,11 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
             section.get("content", ""),
             section.get("status"),
         )
-        needs_inner_wiring_revision = section_name == "Your Inner Wiring" and any(
+        needs_emotional_revision = section_name in SYNTHESIS_EMOTIONAL_SECTIONS and any(
             "insufficient concrete emotional/behavioral language" in issue
             for issue in emotional_issues
         )
-        if needs_inner_wiring_revision:
+        if needs_emotional_revision:
             correction_payload = dict(section_payload)
             correction_payload["instructions"] = (
                 section_payload["instructions"]
