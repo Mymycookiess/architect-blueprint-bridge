@@ -22,15 +22,28 @@ def section_writing_rules(title: str) -> str:
 - 3 patterns to watch
 - 1 challenge
 - 1 encouraging message
-- 1 Next Brick"""
+- 1 Next Brick
+
+Ground the plan in THIS customer's supplied personalization_context, not generic self-help.
+Across the six parts, explicitly connect at least four materially relevant validated chart factors
+using their exact sign + planet/angle names when available, and use validated aspects when the
+context supplies them. Translate each factor or aspect into a concrete behavior, choice, habit,
+relationship pattern, or decision the customer can recognize in real life. Do not merely list
+placements. Do not invent Rising, houses, Midheaven, aspects, or any missing chart fact. In
+PARTIAL mode, never reference Rising or houses. Each habit/challenge must be realistic and
+specific enough to try within normal life; avoid generic advice such as simply 'journal more',
+'be yourself', or 'trust the process' unless it is tied to a named validated chart pattern and a
+clear action."""
     if title == FIRST_BRICK_SECTION:
         return """Preserve this focused First / Next Brick chapter. Do not turn it into the
-six-part Personalized Action Plan or repeat that template."""
+six-part Personalized Action Plan or repeat that template. Choose one concrete, realistic action
+that follows from the customer's strongest validated themes and can be started immediately."""
     return """Do not use Action Plan headings or reproduce the Strengths / Supporting Habits /
 Patterns to Watch / Challenge / Encouraging Message / Next Brick template in this chapter.
 Deepen recognition and understanding first. If a closing device is useful, label it
 Architect Reflection and use only 1–2 short personalized prompts or observations,
-60–90 words maximum. Do not add a checklist or generic motivational filler."""
+60–90 words maximum. Do not add a checklist or generic motivational filler. Advance this
+chapter's specific purpose rather than restating explanations already owned by earlier chapters."""
 
 
 def _heading_pattern(heading: str) -> re.Pattern:

@@ -1,0 +1,71 @@
+name: Customer PDF Polish QA
+
+on:
+  pull_request:
+    paths:
+      - 'architect_blueprint_bridge_with_resolver/blueprint_engine/**'
+      - '.github/workflows/customer-pdf-polish.yml'
+  workflow_dispatch:
+
+jobs:
+  pdf-qa:
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: architect_blueprint_bridge_with_resolver/blueprint_engine
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - name: Install dependencies
+        run: pip install -r requirements.txt openpyxl pypdf
+      - name: Run engine tests
+        run: python -m unittest discover -s tests -p 'test_*.py'
+      - name: Generate customer-facing PDF preview
+        run: |
+          python - <<'PY'
+          from architect_engine.renderer import render_pdf
+          payload = {
+              'mode': 'FULL',
+              'customer': {
+                  'name': 'Paul Miller',
+                  'birth_date': '1990-08-08',
+                  'birth_time_local': '10:30',
+                  'birth_time_status': 'KNOWN',
+                  'birth_location_display': 'Oakland, California, USA',
+              },
+              'sections': [
+                  {'title': 'Personalized Cover', 'status': 'INCLUDED', 'content': 'Prepared Exclusively For Paul Miller'},
+                  {'title': 'Welcome to Your Blueprint', 'status': 'INCLUDED', 'content': 'Paul, this Blueprint is designed to help you understand the patterns you can work with intentionally.\n\n**Your Blueprint belongs to you.** Read it as a practical reflection tool, not a fixed verdict.'},
+                  {'title': 'Birth Chart Snapshot', 'status': 'INCLUDED', 'content': '**Sun:** Leo - House 11.\n\n**Moon:** Aquarius - House 5.\n\n**Mercury:** Leo - House 12.\n\n**Venus:** Cancer - House 11.\n\n**Mars:** Cancer - House 11.\n\n**Jupiter:** Pisces - House 7.\n\n**Saturn:** Taurus - House 8.'},
+                  {'title': 'Your Core Identity — Sun', 'status': 'INCLUDED', 'content': 'CORE IDENTITY\nYour **Leo Sun** in the 11th house invites you to notice how identity, visibility, and contribution meet in communities and long-range goals. ' * 7},
+                  {'title': 'Your Emotional World — Moon', 'status': 'INCLUDED', 'content': 'EMOTIONAL WORLD\nYour **Aquarius Moon** in the 5th house asks for room to create, experiment, and feel emotionally alive without losing your independence. ' * 7},
+                  {'title': 'Personalized Action Plan', 'status': 'INCLUDED', 'content': 'STRENGTHS\n1. **Community leadership:** Use your Leo Sun in the 11th house to contribute visibly without making approval the goal.\n2. **Creative independence:** Give your Aquarius Moon in the 5th house a recurring outlet for play and experimentation.\n3. **Protective drive:** Let your Cancer Venus and Cancer Mars in the 11th house turn care for people into clear, sustainable action.\n\nSUPPORTING HABITS\n1. Schedule one weekly contribution to a group, network, or cause that matters to you.\n2. Protect one block of private reflection for your Leo Mercury in the 12th house before major decisions.\n3. Practice naming what security means before making shared-resource commitments connected with Saturn in Taurus in the 8th house.\n\nPATTERNS TO WATCH\n1. Pulling between visibility and emotional distance when the Sun-Moon opposition is activated.\n2. Reacting too quickly when the Moon-Uranus conjunction needs space before certainty.\n3. Overprotecting relationships or group roles when the Venus-Mars conjunction turns care into urgency.\n\nCHALLENGE\nChoose one group or relationship decision this week and wait long enough to name both what you want to express and what you need emotionally before acting.\n\nENCOURAGING MESSAGE\nYour chart does not ask you to choose between individuality and connection. It gives you material for learning how to build both more deliberately.\n\nNEXT BRICK\nBefore your next important group decision, write two lines: “What I want to contribute” and “What I need to stay emotionally grounded.”'},
+                  {'title': 'Your Blueprint Summary', 'status': 'INCLUDED', 'content': 'Your strongest through-line is not a single placement. It is the ongoing work of bringing visibility, emotional independence, care, imagination, and durable boundaries into the same life.'},
+              ],
+          }
+          pages, diagnostics = render_pdf(payload, 'customer-pdf-polish-preview.pdf', return_diagnostics=True)
+          assert pages >= 5, pages
+          assert diagnostics['blank_pages'] == [], diagnostics
+          assert diagnostics['orphaned_headings'] == [], diagnostics
+          assert diagnostics['unresolved_placeholders'] == [], diagnostics
+          print({'pages': pages, 'diagnostics': diagnostics})
+          PY
+      - name: Verify PDF text and Markdown cleanup
+        run: |
+          python - <<'PY'
+          from pypdf import PdfReader
+          reader = PdfReader('customer-pdf-polish-preview.pdf')
+          text='\n'.join(page.extract_text() or '' for page in reader.pages)
+          assert '**' not in text
+          assert 'YOUR BLUEPRINT JOURNEY' in text
+          assert 'Birth Information Used for Your Blueprint' in text
+          assert 'Paul Miller' in text
+          print('Verified pages:', len(reader.pages))
+          PY
+      - name: Upload PDF preview
+        uses: actions/upload-artifact@v4
+        with:
+          name: customer-pdf-polish-preview
+          path: architect_blueprint_bridge_with_resolver/blueprint_engine/customer-pdf-polish-preview.pdf

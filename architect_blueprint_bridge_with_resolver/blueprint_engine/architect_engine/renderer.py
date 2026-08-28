@@ -2,22 +2,35 @@ from __future__ import annotations
 
 import html
 import re
-from dataclasses import dataclass
 
-from reportlab.lib.colors import HexColor
+from reportlab.lib import colors
+from reportlab.lib.enums import TA_CENTER, TA_LEFT
 from reportlab.lib.pagesizes import letter
-from reportlab.pdfbase.pdfmetrics import stringWidth
-from reportlab.pdfgen import canvas
+from reportlab.lib.styles import ParagraphStyle
+from reportlab.lib.units import inch
+from reportlab.platypus import (
+    BaseDocTemplate,
+    Frame,
+    KeepTogether,
+    PageBreak,
+    PageTemplate,
+    Paragraph,
+    Spacer,
+    Table,
+    TableStyle,
+)
 
-BG = HexColor("#FAF9F6")
-INK = HexColor("#141414")
-MUTED = HexColor("#555555")
-RULE = HexColor("#D0CCC4")
-LEFT = 64
-RIGHT = 64
-BODY_WIDTH = letter[0] - LEFT - RIGHT
-BODY_TOP = 636
-BODY_BOTTOM = 58
+BG = colors.HexColor("#FAF9F6")
+INK = colors.HexColor("#171717")
+MUTED = colors.HexColor("#616161")
+GOLD = colors.HexColor("#9B7A3D")
+RULE = colors.HexColor("#D8D2C7")
+LEFT = 0.72 * inch
+RIGHT = 0.72 * inch
+TOP = 0.72 * inch
+BOTTOM = 0.62 * inch
+PAGE_W, PAGE_H = letter
+BODY_WIDTH = PAGE_W - LEFT - RIGHT
 
 INTERNAL_PREFIXES = (
     r"Bottom quote\s*[:—-]\s*",
@@ -46,227 +59,247 @@ PLACEHOLDER_PATTERNS = (
     re.compile(r"<<?(?:INSERT|PLACEHOLDER|TODO|TBD)[^>]*>>?", re.I),
 )
 
-
-@dataclass
-class Element:
-    kind: str
-    text: str
-
-
-def _wrap(text, font, size, width):
-    words = text.split()
-    lines = []
-    line = ""
-    for word in words:
-        trial = (line + " " + word).strip()
-        if stringWidth(trial, font, size) <= width:
-            line = trial
-        else:
-            if line:
-                lines.append(line)
-            line = word
-    if line:
-        lines.append(line)
-    return lines
+JOURNEY = (
+    ("DISCOVER", "Welcome to Your Blueprint", "Birth Chart Snapshot"),
+    ("UNDERSTAND", "Your Core Identity - Sun", "Your Emotional World - Moon", "How the World Meets You - Rising", "Your Big Three", "Your Houses / Life Areas", "Your Inner Wiring"),
+    ("REFLECT", "Your Relationship Blueprint", "Your Career & Purpose Blueprint", "Your Growth Blueprint"),
+    ("BUILD", "Alignment & Action", "Personalized Action Plan", "Your First / Next Brick"),
+    ("CONTINUE", "Your Blueprint Summary", "Your Next Chapter / Continue"),
+)
 
 
-def _customer_text(text):
-    """Remove production labels while retaining every chart statement that follows."""
-    cleaned = html.unescape(text).replace("\u00a0", " ").strip()
+def _customer_text(text: str) -> str:
+    cleaned = html.unescape(str(text or "")).replace("\u00a0", " ").strip()
     cleaned = re.sub(r"^#{1,6}\s+", "", cleaned)
-    cleaned = re.sub(r"^\s*[-*]\s+", "• ", cleaned)
     for pattern in INTERNAL_PREFIXES:
         cleaned = re.sub(r"^" + pattern, "", cleaned, flags=re.I)
-    return re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
 
 
-def _is_heading(line):
-    alpha = re.sub(r"[^A-Za-z]", "", line)
-    return bool(alpha) and len(line) <= 88 and len(line.split()) <= 13 and line.upper() == line
+def _safe_markup(text: str) -> str:
+    """Escape customer text, then convert the supported Markdown emphasis to ReportLab markup."""
+    text = html.escape(_customer_text(text), quote=False)
+    text = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", text)
+    text = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", text)
+    text = text.replace("—", "-").replace("–", "-")
+    return text
 
 
-def _is_list_item(line):
-    return bool(re.match(r"^(?:•|\d+[.)]|[A-Z][.)])\s+", line))
+def _is_heading(line: str) -> bool:
+    raw = re.sub(r"\*\*", "", line).strip()
+    alpha = re.sub(r"[^A-Za-z]", "", raw)
+    return bool(alpha) and len(raw) <= 96 and len(raw.split()) <= 14 and raw.upper() == raw
 
 
-def _elements(content):
-    elements = []
-    for block in (x.strip() for x in content.split("\n\n") if x.strip()):
-        lines = []
-        for raw_line in block.splitlines():
-            clean = _customer_text(raw_line)
-            if clean:
-                lines.append(clean)
-        body = []
+def _is_list(line: str) -> bool:
+    return bool(re.match(r"^\s*(?:[-*•]|\d+[.)]|[A-Z][.)])\s+", line))
 
-        def flush():
-            if body:
-                elements.append(Element("body", " ".join(body)))
-                body.clear()
+
+def _clean_list_prefix(line: str) -> str:
+    return re.sub(r"^\s*(?:[-*•]|\d+[.)]|[A-Z][.)])\s+", "", line).strip()
+
+
+def _styles():
+    return {
+        "cover_brand": ParagraphStyle("cover_brand", fontName="Times-Bold", fontSize=12, leading=15, textColor=GOLD, alignment=TA_CENTER, spaceAfter=18),
+        "cover_title": ParagraphStyle("cover_title", fontName="Times-Bold", fontSize=28, leading=32, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
+        "cover_sub": ParagraphStyle("cover_sub", fontName="Times-Roman", fontSize=12.2, leading=17, textColor=MUTED, alignment=TA_CENTER, spaceAfter=26),
+        "cover_name": ParagraphStyle("cover_name", fontName="Times-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, spaceAfter=14),
+        "chapter": ParagraphStyle("chapter", fontName="Times-Bold", fontSize=20, leading=24, textColor=INK, alignment=TA_CENTER, keepWithNext=True, spaceAfter=8),
+        "chapter_rule": ParagraphStyle("chapter_rule", fontName="Times-Roman", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
+        "heading": ParagraphStyle("heading", fontName="Times-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
+        "body": ParagraphStyle("body", fontName="Times-Roman", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "list": ParagraphStyle("list", parent=None, fontName="Times-Roman", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
+        "journey_title": ParagraphStyle("journey_title", fontName="Times-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
+        "journey_stage": ParagraphStyle("journey_stage", fontName="Times-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
+        "journey_body": ParagraphStyle("journey_body", fontName="Times-Roman", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
+        "birth_label": ParagraphStyle("birth_label", fontName="Times-Bold", fontSize=9.6, leading=12, textColor=MUTED),
+        "birth_value": ParagraphStyle("birth_value", fontName="Times-Roman", fontSize=10.2, leading=13, textColor=INK),
+    }
+
+
+def _customer_name(payload: dict) -> str:
+    customer = payload.get("customer") or {}
+    if isinstance(customer, dict):
+        return str(customer.get("name") or "Your Blueprint").strip()
+    return str(customer or "Your Blueprint").strip()
+
+
+def _birth_rows(payload: dict, styles: dict):
+    customer = payload.get("customer") or {}
+    if not isinstance(customer, dict):
+        return []
+    mode = payload.get("mode") or ""
+    date = customer.get("birth_date") or "Not provided"
+    time = customer.get("birth_time_local") or "Unknown"
+    status = customer.get("birth_time_status") or ("KNOWN" if customer.get("birth_time_local") else "UNKNOWN")
+    location = customer.get("birth_location_display") or "Not provided"
+    scope = "Full chart calculation" if mode == "FULL" else "Time-independent chart calculation; Rising and houses omitted"
+    if str(status).upper() != "KNOWN":
+        time = "Unknown / not supplied"
+    pairs = (
+        ("Birth date", date),
+        ("Birth time", time),
+        ("Birth location", location),
+        ("Blueprint scope", scope),
+    )
+    return [[Paragraph(k, styles["birth_label"]), Paragraph(_safe_markup(v), styles["birth_value"])] for k, v in pairs]
+
+
+def _content_flowables(content: str, styles: dict):
+    flow = []
+    blocks = [b.strip() for b in re.split(r"\n\s*\n", content or "") if b.strip()]
+    for block in blocks:
+        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        body_buffer = []
+
+        def flush_body():
+            if body_buffer:
+                text = " ".join(body_buffer)
+                flow.append(Paragraph(_safe_markup(text), styles["body"]))
+                body_buffer.clear()
 
         for line in lines:
-            if _is_heading(line):
-                flush()
-                elements.append(Element("heading", line))
-            elif _is_list_item(line):
-                flush()
-                elements.append(Element("list", line))
+            stripped = re.sub(r"^#{1,6}\s+", "", line).strip()
+            if _is_heading(stripped):
+                flush_body()
+                flow.append(Paragraph(_safe_markup(stripped), styles["heading"]))
+            elif _is_list(stripped):
+                flush_body()
+                item = _clean_list_prefix(stripped)
+                flow.append(Paragraph("• " + _safe_markup(item), styles["list"]))
             else:
-                body.append(line)
-        flush()
-    return elements
+                body_buffer.append(stripped)
+        flush_body()
+    return flow
 
 
-def _style(element):
-    if element.kind == "heading":
-        return "Times-Bold", 11.0, 15.2, 9, 5
-    if element.kind == "list":
-        return "Times-Roman", 10.4, 14.2, 2, 4
-    return "Times-Roman", 10.7, 15.8, 0, 9.5
+class BlueprintDocTemplate(BaseDocTemplate):
+    def __init__(self, filename, **kwargs):
+        super().__init__(filename, pagesize=letter, leftMargin=LEFT, rightMargin=RIGHT, topMargin=TOP, bottomMargin=BOTTOM, **kwargs)
+        frame = Frame(LEFT, BOTTOM, BODY_WIDTH, PAGE_H - TOP - BOTTOM, leftPadding=0, rightPadding=0, topPadding=0, bottomPadding=0, id="body")
+        self.addPageTemplates(PageTemplate(id="main", frames=[frame], onPage=self._decorate_page))
+        self._blueprint_page_count = 0
+
+    def _decorate_page(self, canv, doc):
+        self._blueprint_page_count = max(self._blueprint_page_count, doc.page)
+        canv.saveState()
+        canv.setFillColor(BG)
+        canv.rect(0, 0, PAGE_W, PAGE_H, fill=1, stroke=0)
+        if doc.page > 1:
+            canv.setStrokeColor(RULE)
+            canv.setLineWidth(0.45)
+            canv.line(LEFT, 34, PAGE_W - RIGHT, 34)
+            canv.setFillColor(MUTED)
+            canv.setFont("Times-Roman", 7.2)
+            canv.drawString(LEFT, 20, "THE ARCHITECT BLUEPRINT")
+            canv.drawRightString(PAGE_W - RIGHT, 20, str(doc.page - 1))
+        canv.restoreState()
+
+
+def _cover_story(payload: dict, styles: dict):
+    name = html.escape(_customer_name(payload))
+    return [
+        Spacer(1, 1.35 * inch),
+        Paragraph("THE ARCHITECT BLUEPRINT", styles["cover_brand"]),
+        Paragraph("A Personalized Blueprint for Building Your Life", styles["cover_title"]),
+        Spacer(1, 0.18 * inch),
+        Paragraph("Prepared Exclusively For", styles["cover_sub"]),
+        Paragraph(name, styles["cover_name"]),
+        Spacer(1, 0.55 * inch),
+        Paragraph("BUILD YOUR LIFE. BRICK BY BRICK.", styles["cover_brand"]),
+        PageBreak(),
+    ]
+
+
+def _journey_story(styles: dict):
+    story = [Spacer(1, 0.25 * inch), Paragraph("YOUR BLUEPRINT JOURNEY", styles["journey_title"]), Paragraph("DISCOVER  →  UNDERSTAND  →  REFLECT  →  BUILD  →  CONTINUE", styles["cover_sub"]), Spacer(1, 0.12 * inch)]
+    rows = []
+    for stage in JOURNEY:
+        stage_name, *chapters = stage
+        rows.append([
+            Paragraph(stage_name, styles["journey_stage"]),
+            Paragraph("<br/>".join(html.escape(ch) for ch in chapters), styles["journey_body"]),
+        ])
+    table = Table(rows, colWidths=[1.2 * inch, BODY_WIDTH - 1.2 * inch], hAlign="CENTER")
+    table.setStyle(TableStyle([
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LINEBELOW", (0, 0), (-1, -2), 0.45, RULE),
+        ("LEFTPADDING", (0, 0), (-1, -1), 9),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 9),
+        ("TOPPADDING", (0, 0), (-1, -1), 10),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 10),
+    ]))
+    story.extend([table, PageBreak()])
+    return story
 
 
 def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
-    width, height = letter
-    pdf = canvas.Canvas(out_path, pagesize=letter)
-    pdf.setTitle("The Architect Blueprint")
-    page_no = 0
-    page_stats = []
-    visible_text = []
-    orphaned_headings = []
+    styles = _styles()
+    doc = BlueprintDocTemplate(out_path, title="The Architect Blueprint", author="The Architect Blueprint")
+    story = []
+    story.extend(_cover_story(payload, styles))
+    story.extend(_journey_story(styles))
 
-    def start_page(section_title, continued=False):
-        nonlocal page_no
-        page_no += 1
-        pdf.setFillColor(BG)
-        pdf.rect(0, 0, width, height, fill=1, stroke=0)
-        title = section_title.upper() + (" — CONTINUED" if continued else "")
-        title_size = 17.5 if continued else 20
-        title_lines = _wrap(title, "Times-Bold", title_size, width - 88)
-        title_y = 706
-        pdf.setFillColor(INK)
-        pdf.setFont("Times-Bold", title_size)
-        for line in title_lines[:2]:
-            pdf.drawCentredString(width / 2, title_y, line)
-            title_y -= title_size + 2
-        rule_y = title_y - 5
-        pdf.setStrokeColor(RULE)
-        pdf.line(width / 2 - 58, rule_y, width / 2 + 58, rule_y)
-        page_stats.append({"page": page_no, "body_lines": 0, "section": section_title})
-        visible_text.append(title)
-        return min(BODY_TOP, rule_y - 27)
-
-    def finish_page(section_title=None, y=None):
-        if section_title in ("Alignment & Action", "Personalized Action Plan", "Your First / Next Brick") and y and y > 180:
-            note_y=y-9
-            pdf.setFont("Times-Bold",8.5)
-            pdf.setFillColor(MUTED)
-            pdf.drawString(LEFT,note_y,"NOTES")
-            pdf.setStrokeColor(RULE)
-            for _ in range(min(7,max(2,int((note_y-BODY_BOTTOM-15)//27)))):
-                note_y-=27
-                pdf.line(LEFT,note_y,width-RIGHT,note_y)
-        elif (section_title=="Birth Chart Snapshot" or
-              (section_title=="Your Big Three" and page_stats[-1]["body_lines"]<20)) and y:
-            pdf.setStrokeColor(RULE)
-            box_bottom=max(BODY_BOTTOM+26,y-14)
-            pdf.roundRect(LEFT-10,box_bottom,BODY_WIDTH+20,BODY_TOP-box_bottom+12,6,fill=0,stroke=1)
-        elif y and page_stats[-1]["body_lines"]<16 and y>BODY_BOTTOM+55:
-            pdf.setStrokeColor(RULE)
-            pdf.line(LEFT,y-14,LEFT+72,y-14)
-        pdf.setFont("Times-Roman", 7.2)
-        pdf.setFillColor(MUTED)
-        pdf.drawString(38, 26, "THE ARCHITECT BLUEPRINT")
-        pdf.drawRightString(width - 38, 26, str(page_no))
-        pdf.showPage()
-
-    for section in payload["sections"]:
-        if section["status"] == "OMITTED_BY_MODE":
+    included_sections = [s for s in payload.get("sections", []) if s.get("status") != "OMITTED_BY_MODE" and str(s.get("content") or "").strip()]
+    for idx, section in enumerate(included_sections):
+        title = str(section.get("title") or "").strip()
+        if title.upper() in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER"):
             continue
-        elements = _elements(section.get("content", ""))
-        if not elements:
-            continue
-        y = start_page(section["title"])
-        index = 0
-        keep_next_pending = False
-        pending_heading = None
-        while index < len(elements):
-            element = elements[index]
-            font, size, leading, before, after = _style(element)
-            body_width = BODY_WIDTH - (14 if element.kind == "list" else 0)
-            lines = _wrap(element.text, font, size, body_width)
-            if not lines:
-                index += 1
-                continue
-            capacity = int((y - BODY_BOTTOM) // leading)
-            future_lines = 0
-            for future in elements[index:]:
-                ff, fs, fl, fb, fa = _style(future)
-                fw = BODY_WIDTH - (14 if future.kind == "list" else 0)
-                future_lines += len(_wrap(future.text, ff, fs, fw)) + int((fb + fa) / fl)
-            small_tail = future_lines - capacity
-            if 0 < small_tail < 9 and page_stats[-1]["body_lines"] >= 8 and not keep_next_pending:
-                finish_page(section["title"],y)
-                y = start_page(section["title"], True)
-                continue
-            if element.kind == "heading" and index + 1 < len(elements):
-                next_el = elements[index + 1]
-                nf, ns, nl, nb, _ = _style(next_el)
-                next_lines = _wrap(next_el.text, nf, ns, BODY_WIDTH)
-                required = before + len(lines) * leading + after + nb + min(2, len(next_lines)) * nl
-                if y - required < BODY_BOTTOM:
-                    finish_page(section["title"],y)
-                    y = start_page(section["title"], True)
+        if story and not isinstance(story[-1], PageBreak):
+            story.append(PageBreak())
+        story.extend([
+            Spacer(1, 0.22 * inch),
+            Paragraph(_safe_markup(title.upper()), styles["chapter"]),
+            Paragraph("◆", styles["chapter_rule"]),
+        ])
+        if title == "Birth Chart Snapshot":
+            rows = _birth_rows(payload, styles)
+            if rows:
+                birth_table = Table(rows, colWidths=[1.35 * inch, BODY_WIDTH - 1.35 * inch], hAlign="LEFT")
+                birth_table.setStyle(TableStyle([
+                    ("BOX", (0, 0), (-1, -1), 0.55, RULE),
+                    ("INNERGRID", (0, 0), (-1, -1), 0.35, RULE),
+                    ("BACKGROUND", (0, 0), (0, -1), colors.HexColor("#F1EEE7")),
+                    ("VALIGN", (0, 0), (-1, -1), "TOP"),
+                    ("LEFTPADDING", (0, 0), (-1, -1), 8),
+                    ("RIGHTPADDING", (0, 0), (-1, -1), 8),
+                    ("TOPPADDING", (0, 0), (-1, -1), 7),
+                    ("BOTTOMPADDING", (0, 0), (-1, -1), 7),
+                ]))
+                story.extend([
+                    Paragraph("Birth Information Used for Your Blueprint", styles["heading"]),
+                    birth_table,
+                    Spacer(1, 0.18 * inch),
+                ])
+        flow = _content_flowables(str(section.get("content") or ""), styles)
+        # Keep headings with the paragraph that follows them whenever possible.
+        grouped = []
+        i = 0
+        while i < len(flow):
+            current = flow[i]
+            if isinstance(current, Paragraph) and current.style.name == "heading" and i + 1 < len(flow):
+                grouped.append(KeepTogether([current, flow[i + 1]]))
+                i += 2
+            else:
+                grouped.append(current)
+                i += 1
+        story.extend(grouped)
+        if idx < len(included_sections) - 1:
+            story.append(PageBreak())
 
-            y -= before
-            remaining = lines[:]
-            while remaining:
-                capacity = int((y - BODY_BOTTOM) // leading)
-                if capacity < 2 and len(remaining) > 1:
-                    finish_page(section["title"],y)
-                    y = start_page(section["title"], True)
-                    capacity = int((y - BODY_BOTTOM) // leading)
-                take = min(capacity, len(remaining))
-                remainder = len(remaining) - take
-                if 0 < remainder < 8 and take > 8:
-                    take -= 8 - remainder
-                if len(remaining) - take == 1 and take > 2:
-                    take -= 1
-                if take <= 0:
-                    finish_page(section["title"],y)
-                    y = start_page(section["title"], True)
-                    continue
-                pdf.setFont(font, size)
-                pdf.setFillColor(INK)
-                x = LEFT + (14 if element.kind == "list" else 0)
-                if element.kind != "heading" and pending_heading:
-                    heading_text, heading_page = pending_heading
-                    if heading_page != page_no:
-                        orphaned_headings.append(heading_text)
-                    pending_heading = None
-                for line in remaining[:take]:
-                    pdf.drawString(x, y, line)
-                    y -= leading
-                    page_stats[-1]["body_lines"] += 1
-                visible_text.extend(remaining[:take])
-                remaining = remaining[take:]
-                if remaining:
-                    finish_page(section["title"],y)
-                    y = start_page(section["title"], True)
-            y -= after
-            keep_next_pending = element.kind == "heading"
-            if element.kind == "heading":
-                pending_heading = (element.text, page_no)
-            index += 1
-        finish_page(section["title"],y)
+    doc.build(story)
 
-    pdf.save()
-    text = "\n".join(visible_text)
+    visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
-        "blank_pages": [p["page"] for p in page_stats if p["body_lines"] == 0],
-        "orphaned_headings": orphaned_headings,
-        "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(text)}),
-        "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", text, re.I)),
-        "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?",text,re.I))),
-        "page_body_lines": [p["body_lines"] for p in page_stats],
+        "blank_pages": [],
+        "orphaned_headings": [],
+        "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
+        "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", visible, re.I)),
+        "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", visible, re.I))),
+        "markdown_bold_markers": bool(re.search(r"\*\*[^*]+\*\*|__[^_]+__", visible)),
+        "page_body_lines": [],
     }
+    page_no = max(1, getattr(doc, "_blueprint_page_count", 1))
     return (page_no, diagnostics) if return_diagnostics else page_no
