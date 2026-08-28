@@ -96,6 +96,9 @@ def _safe_markup(text: str) -> str:
     text = html.escape(_customer_text(text), quote=False)
     text = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", text)
+    # Remove unmatched emphasis delimiters after valid pairs have become real
+    # PDF bold formatting. A bare delimiter has no customer-facing meaning.
+    text = text.replace("**", "").replace("__", "")
     text = text.replace("—", "-").replace("–", "-")
     return text
 

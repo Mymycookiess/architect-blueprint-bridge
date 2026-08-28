@@ -46,7 +46,7 @@ class VisualQATests(unittest.TestCase):
             )
         self.assertFalse(diagnostics["markdown_bold_markers"])
 
-    def test_markdown_qa_rejects_marker_visible_in_rendered_pdf(self):
+    def test_renderer_removes_unmatched_markdown_delimiter(self):
         payload = {
             "sections": [{
                 "title": "Personalized Action Plan",
@@ -55,10 +55,13 @@ class VisualQATests(unittest.TestCase):
             }]
         }
         with tempfile.TemporaryDirectory() as td:
-            _, diagnostics = render_pdf(
-                payload, str(Path(td) / "broken-bold-check.pdf"), return_diagnostics=True
+            out = Path(td) / "broken-bold-check.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            extracted = "\n".join(
+                page.extract_text() or "" for page in PdfReader(out).pages
             )
-        self.assertTrue(diagnostics["markdown_bold_markers"])
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+        self.assertNotIn("**", extracted)
 
     def test_customer_labels_are_removed_without_removing_chart_fact(self):
         self.assertEqual(
