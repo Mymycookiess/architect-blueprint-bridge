@@ -5,3 +5,20 @@ services:
     dockerfilePath: ./Dockerfile
     healthCheckPath: /health
     autoDeployTrigger: commit
+    envVars:
+      - key: R2_ACCOUNT_ID
+        sync: false
+      - key: R2_ACCESS_KEY_ID
+        sync: false
+      - key: R2_SECRET_ACCESS_KEY
+        sync: false
+      - key: R2_BUCKET_NAME
+        sync: false
+      - key: R2_ENDPOINT_URL
+        sync: false
+      - key: BLUEPRINT_DOWNLOAD_TTL_SECONDS
+        value: "604800"
+      - key: RESEND_API_KEY
+        sync: false
+      - key: BLUEPRINT_FROM_EMAIL
+        sync: false

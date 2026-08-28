@@ -32,6 +32,7 @@ from architect_engine.emotional_rules import report_emotional_rule_issues, secti
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
+from bridge_app.delivery import attempt_delivery_if_manifest_pass
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 BLUEPRINT_OUTPUT_ROOT = Path(os.getenv("BLUEPRINT_OUTPUT_ROOT", str(PACKAGE_ROOT / "production_runs")))
@@ -483,6 +484,9 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
     run_dir.mkdir(parents=True, exist_ok=True)
 
     if (run_dir / "frontdoor_completed.flag").exists():
+        intake_path = run_dir / "customer_intake.json"
+        if intake_path.exists():
+            attempt_delivery_if_manifest_pass(run_dir, json.loads(intake_path.read_text()))
         return
 
     keepalive_stop = threading.Event()
@@ -572,6 +576,7 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
         if manifest.get("status") == "PASS":
             write_status(run_dir, "BLUEPRINT_READY")
             (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
+            attempt_delivery_if_manifest_pass(run_dir, intake)
         else:
             qa_path = run_dir / "engine_output" / "06_qa.json"
             qa = json.loads(qa_path.read_text()) if qa_path.exists() else {}

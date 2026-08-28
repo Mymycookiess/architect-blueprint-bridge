@@ -15,6 +15,26 @@ After the customer pays:
 6. Birth location is resolved to latitude / longitude / timezone.
 7. The bundled Blueprint Engine runs automatically.
 8. The final report is released only if `00_manifest.json` says `PASS`.
+9. A passing PDF is uploaded to private Cloudflare R2 storage and delivered by
+   email through a time-limited signed download link.
+
+## Customer delivery configuration
+
+Successful delivery requires a private Cloudflare R2 bucket and a verified
+Resend sending domain/address. Configure these Render environment variables:
+
+- `R2_ACCOUNT_ID`
+- `R2_ACCESS_KEY_ID`
+- `R2_SECRET_ACCESS_KEY`
+- `R2_BUCKET_NAME`
+- `R2_ENDPOINT_URL` (optional; defaults to the account R2 S3 endpoint)
+- `BLUEPRINT_DOWNLOAD_TTL_SECONDS` (optional; defaults to `604800`, seven days)
+- `RESEND_API_KEY`
+- `BLUEPRINT_FROM_EMAIL`
+
+The R2 bucket remains private. Signed URLs are created only for delivery and
+are not persisted. Delivery state is stored as `delivery.json` in each run
+directory, independently from the Blueprint generation status.
 
 ## Why this approach
 
