@@ -32,6 +32,34 @@ class VisualQATests(unittest.TestCase):
             self.assertTrue(any("Vera" in name for name in base_fonts), base_fonts)
             self.assertFalse(any("Times" in name for name in base_fonts), base_fonts)
 
+    def test_markdown_qa_checks_rendered_pdf_not_source(self):
+        payload = {
+            "sections": [{
+                "title": "Personalized Action Plan",
+                "status": "INCLUDED",
+                "content": "**A bold heading** becomes real formatting.",
+            }]
+        }
+        with tempfile.TemporaryDirectory() as td:
+            _, diagnostics = render_pdf(
+                payload, str(Path(td) / "bold-check.pdf"), return_diagnostics=True
+            )
+        self.assertFalse(diagnostics["markdown_bold_markers"])
+
+    def test_markdown_qa_rejects_marker_visible_in_rendered_pdf(self):
+        payload = {
+            "sections": [{
+                "title": "Personalized Action Plan",
+                "status": "INCLUDED",
+                "content": "A broken **bold marker remains visible.",
+            }]
+        }
+        with tempfile.TemporaryDirectory() as td:
+            _, diagnostics = render_pdf(
+                payload, str(Path(td) / "broken-bold-check.pdf"), return_diagnostics=True
+            )
+        self.assertTrue(diagnostics["markdown_bold_markers"])
+
     def test_customer_labels_are_removed_without_removing_chart_fact(self):
         self.assertEqual(
             _customer_text("Verified chart note — Sun: Scorpio — House 2."),

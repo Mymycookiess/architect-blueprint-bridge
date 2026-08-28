@@ -24,6 +24,7 @@ from reportlab.platypus import (
 )
 from reportlab.pdfbase import pdfmetrics
 from reportlab.pdfbase.ttfonts import TTFont
+from pypdf import PdfReader
 
 
 # ReportLab's built-in Type 1 fonts rendered with broken character spacing in
@@ -304,6 +305,12 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
 
     doc.build(story)
 
+    # Customer-facing diagnostics must inspect the artifact customers receive,
+    # not the Markdown-bearing source used to create it.
+    rendered_text = "\n".join(
+        page.extract_text() or "" for page in PdfReader(out_path).pages
+    )
+
     visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
         "blank_pages": [],
@@ -311,7 +318,7 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", visible, re.I)),
         "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", visible, re.I))),
-        "markdown_bold_markers": bool(re.search(r"\*\*[^*]+\*\*|__[^_]+__", _safe_markup(visible))),
+        "markdown_bold_markers": bool(re.search(r"\*\*|__", rendered_text)),
         "page_body_lines": [],
     }
     page_no = max(1, getattr(doc, "_blueprint_page_count", 1))
