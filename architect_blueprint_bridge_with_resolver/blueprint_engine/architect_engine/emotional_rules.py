@@ -38,6 +38,18 @@ def section_emotional_rules(title):
     return """Translate the validated factors and selected source ideas into concrete lived experience: what the person notices internally, needs from others, protects, does under pressure, or considers when making choices. Show reinforcement or tension only when supported by the supplied synthesis anchors. Use compassionate, direct language without sounding therapeutic. Do not invent biography, trauma, childhood events, diagnoses, relationship history, or unsupported reactions. Prefer recognizable dynamics over a list of abstract traits."""
 
 
+def section_emotional_revision_instruction(title, content=""):
+    if title != "Your Inner Wiring":
+        return ""
+    instruction = """Write Your Inner Wiring as recognizable lived experience, not a trait list. Weave the validated factors naturally into how the person notices an internal reaction, responds when stressed or guarded, makes a conflicted decision, protects a need, or seeks security in relationship. Include several concrete emotional and behavioral signals in connected prose, using direct personalized language such as “you notice,” “you feel,” “you protect,” “you respond,” or “you decide” where supported. Do not turn these signals into a checklist, and do not invent a trigger, coping response, relationship history, diagnosis, or life event beyond the supplied context."""
+    if content and any(
+        "insufficient concrete emotional/behavioral language" in issue
+        for issue in section_emotional_rule_issues(title, content)
+    ):
+        instruction += " The supplied draft failed emotional-specificity QA. Rewrite the complete section to add concrete internal reactions and behavioral expression while preserving its validated astrology and synthesis."
+    return instruction
+
+
 def render_emotional_note(section, chart_facts):
     anchors=chart_facts.get("synthesis_anchors",{})
     factors={factor["key"]:factor for factor in anchors.get(section,{}).get("factors",[])}

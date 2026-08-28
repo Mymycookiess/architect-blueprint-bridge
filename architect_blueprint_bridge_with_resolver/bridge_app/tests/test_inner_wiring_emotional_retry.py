@@ -1,0 +1,115 @@
+import json
+import unittest
+from pathlib import Path
+from unittest.mock import patch
+
+from bridge_app.app import AIWriterRequest, ai_writer
+
+from architect_engine.context_builder import build_context
+from architect_engine.emotional_rules import section_emotional_rule_issues
+from architect_engine.selector import select_sources
+from architect_engine.synthesis import section_synthesis_rule_issues
+
+
+TITLE = "Your Inner Wiring"
+
+
+class InnerWiringEmotionalRetryTests(unittest.TestCase):
+    @classmethod
+    def setUpClass(cls):
+        engine_dir = Path(__file__).resolve().parents[2] / "blueprint_engine"
+        chart = json.loads(
+            (engine_dir / "fixtures" / "T01_FULL_Architect_Chart_Record_CORRECTED.json").read_text()
+        )
+        config = json.loads((engine_dir / "config" / "pipeline_config.json").read_text())
+        selector = select_sources(
+            chart,
+            str(engine_dir / "data" / "Architect_Detailed_Content_Library_v1.xlsx"),
+            config["library_sheet"],
+        )
+        cls.context = build_context(chart, selector, "CTX_inner_wiring_live")
+        cls.anchor = cls.context["chart_facts"]["synthesis_anchors"][TITLE]
+        cls.factor_names = [
+            f'{factor["sign"]} {factor["label"]}'
+            for factor in cls.anchor["factors"][:2]
+        ]
+
+    def _request(self):
+        return AIWriterRequest(
+            contract="Use only supplied validated facts.",
+            report_id="RPT_inner_wiring_live",
+            personalization_context=self.context,
+            section_name=TITLE,
+            section_word_target=640,
+        )
+
+    def _section(self, content):
+        return {
+            "section_id": "generated",
+            "title": TITLE,
+            "status": "INCLUDED",
+            "content": content,
+            "evidence_refs": [],
+        }
+
+    def _grounded_specific_content(self):
+        first, second = self.factor_names
+        return (
+            f"Your {first} and {second} shape the same inner conversation. "
+            "You notice the pressure first as a conflict between what feels safe and what needs to be said. "
+            "When stress rises, you protect time to think before you respond, especially when a quick decision "
+            "would leave an important need unheard. In relationship, you decide what to reveal by watching "
+            "whether the exchange feels secure enough for an honest response."
+        )
+
+    def test_live_style_first_draft_passes_emotional_specificity(self):
+        content = self._grounded_specific_content()
+        calls = []
+
+        def fake_call(payload, output_kind):
+            calls.append((payload, output_kind))
+            return self._section(content)
+
+        with patch("bridge_app.app.ARCHITECT_AI_TOKEN", "token"), patch(
+            "bridge_app.app.OPENAI_API_KEY", "key"
+        ), patch("bridge_app.app._call_openai", side_effect=fake_call):
+            result = ai_writer(
+                self._request(),
+                authorization=None,
+                x_architect_token="token",
+            )
+
+        self.assertEqual(len(calls), 1)
+        self.assertEqual(section_emotional_rule_issues(TITLE, result["content"]), [])
+        self.assertEqual(section_synthesis_rule_issues(TITLE, result["content"], self.anchor), [])
+        self.assertIn("recognizable lived experience, not a trait list", calls[0][0]["instructions"])
+
+    def test_emotional_failure_gets_targeted_complete_section_retry(self):
+        first, second = self.factor_names
+        weak = f"Your {first} and {second} operate as connected parts of your inner wiring."
+        corrected = self._grounded_specific_content()
+        calls = []
+
+        def fake_call(payload, output_kind):
+            calls.append((payload, output_kind))
+            return self._section(weak if len(calls) == 1 else corrected)
+
+        with patch("bridge_app.app.ARCHITECT_AI_TOKEN", "token"), patch(
+            "bridge_app.app.OPENAI_API_KEY", "key"
+        ), patch("bridge_app.app._call_openai", side_effect=fake_call):
+            result = ai_writer(
+                self._request(),
+                authorization=None,
+                x_architect_token="token",
+            )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][1], "section emotional revision")
+        self.assertIn("failed emotional-specificity QA", calls[1][0]["instructions"])
+        self.assertIn("concrete internal reactions and behavioral expression", calls[1][0]["instructions"])
+        self.assertEqual(section_emotional_rule_issues(TITLE, result["content"]), [])
+        self.assertEqual(section_synthesis_rule_issues(TITLE, result["content"], self.anchor), [])
+
+
+if __name__ == "__main__":
+    unittest.main()
