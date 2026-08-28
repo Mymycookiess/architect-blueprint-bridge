@@ -30,6 +30,7 @@ from architect_engine.content_rules import report_content_rule_issues, section_c
 from architect_engine.confidence_rules import disclaimer_revision_instruction, repetitive_disclaimer_phrases, report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
 from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
+from architect_engine.writer import SECTION_ORDER
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 BLUEPRINT_OUTPUT_ROOT = Path(os.getenv("BLUEPRINT_OUTPUT_ROOT", str(PACKAGE_ROOT / "production_runs")))
@@ -371,6 +372,87 @@ def _relay_ai_writer_validation_failures(engine_stdout: str) -> None:
         )
 
 
+def _manifest_failure_records(manifest: dict, qa: dict) -> list[dict]:
+    manifest_status = str(manifest.get("status") or "MISSING")
+    customer = str(manifest.get("customer") or "")
+
+    def safe_text(value: object) -> str:
+        text = str(value)
+        if customer:
+            text = re.sub(re.escape(customer), "<redacted>", text, flags=re.I)
+        text = re.sub(r"\b[A-Z0-9._%+-]+@[A-Z0-9.-]+\.[A-Z]{2,}\b", "<redacted-email>", text, flags=re.I)
+        return text[:300]
+
+    def affected_section(issue: str) -> str | None:
+        lowered = issue.casefold()
+        for title in SECTION_ORDER:
+            if title.casefold() in lowered:
+                return title
+        return None
+
+    records = []
+    qa_status = qa.get("status")
+    if qa_status != "PASS":
+        issues = qa.get("issues") or []
+        if issues:
+            for issue in issues:
+                issue_text = safe_text(issue)
+                records.append({
+                    "manifest_status": manifest_status,
+                    "check": "qa_issue",
+                    "actual": issue_text,
+                    "expected": "no QA issues",
+                    "section": affected_section(issue_text),
+                })
+        else:
+            records.append({
+                "manifest_status": manifest_status,
+                "check": "qa_status",
+                "actual": safe_text(qa_status),
+                "expected": "PASS",
+                "section": None,
+            })
+
+    word_target = qa.get("word_target") or {}
+    if word_target.get("status") != "PASS":
+        records.append({
+            "manifest_status": manifest_status,
+            "check": "word_target",
+            "actual": qa.get("word_count"),
+            "expected": f'{word_target.get("min")} <= words <= {word_target.get("max")}',
+            "section": None,
+        })
+
+    page_target = qa.get("page_target") or {}
+    if page_target.get("status") != "PASS":
+        records.append({
+            "manifest_status": manifest_status,
+            "check": "page_target",
+            "actual": page_target.get("actual"),
+            "expected": f'{page_target.get("min")} <= pages <= {page_target.get("max")}',
+            "section": None,
+        })
+
+    if qa.get("source_boundary") != "PASS":
+        records.append({
+            "manifest_status": manifest_status,
+            "check": "source_boundary",
+            "actual": safe_text(qa.get("source_boundary")),
+            "expected": "PASS",
+            "section": None,
+        })
+    return records
+
+
+def _log_manifest_failures(manifest: dict, qa: dict) -> None:
+    for record in _manifest_failure_records(manifest, qa):
+        print(
+            "BLUEPRINT_MANIFEST_FAILURE "
+            + json.dumps(record, ensure_ascii=True, separators=(",", ":")),
+            flush=True,
+        )
+
+
 def _keep_render_awake(stop_event: threading.Event) -> None:
     """Keep a long Blueprint job alive on Render's free web-service tier."""
     service_url = os.getenv("RENDER_EXTERNAL_URL", "").rstrip("/")
@@ -490,6 +572,9 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
             write_status(run_dir, "BLUEPRINT_READY")
             (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
         else:
+            qa_path = run_dir / "engine_output" / "06_qa.json"
+            qa = json.loads(qa_path.read_text()) if qa_path.exists() else {}
+            _log_manifest_failures(manifest, qa)
             write_status(
                 run_dir,
                 "REVIEW_REQUIRED",
