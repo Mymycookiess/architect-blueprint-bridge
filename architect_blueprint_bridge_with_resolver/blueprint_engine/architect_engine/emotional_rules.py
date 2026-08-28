@@ -11,10 +11,13 @@ EMOTIONAL_SECTIONS = (
     "Your Blueprint Summary",
 )
 SYNTHESIS_EMOTIONAL_SECTIONS = (
+    "Your Emotional World — Moon",
+    "Your Big Three",
     "Your Inner Wiring",
     "Your Relationship Blueprint",
     "Your Career & Purpose Blueprint",
     "Your Growth Blueprint",
+    "Your Blueprint Summary",
 )
 EXPERIENTIAL_MARKERS = (
     "feel", "need", "safe", "seen", "understood", "misunderstood",
@@ -48,10 +51,13 @@ def section_emotional_revision_instruction(title, content=""):
     if title not in SYNTHESIS_EMOTIONAL_SECTIONS:
         return ""
     life_area = {
+        "Your Emotional World — Moon": "emotional needs, protective reactions, and the conditions that help feelings become honest",
+        "Your Big Three": "the difference between what you feel, what you decide, and what you are ready to show other people",
         "Your Inner Wiring": "inner reactions, guarded moments, and conflicted decisions",
         "Your Relationship Blueprint": "trust, boundaries, closeness, and relationship choices",
         "Your Career & Purpose Blueprint": "work pressure, fulfillment, decisions, and visible effort",
         "Your Growth Blueprint": "discomfort, coping patterns, security, and growth choices",
+        "Your Blueprint Summary": "the recurring needs, decisions, boundaries, and responses that tie the whole chart together",
     }[title]
     instruction = f"""Write {title} as recognizable lived experience, not a trait list. Weave the validated factors naturally into {life_area}. Show what the person notices internally and how that pattern affects a response, choice, boundary, coping tendency, or behavior under pressure where the supplied factors support it. Include several concrete emotional and behavioral signals in connected prose, using direct personalized language such as “you notice,” “you feel,” “you protect,” “you respond,” or “you decide” where supported. Do not turn these signals into a checklist, and do not invent a trigger, coping response, relationship history, diagnosis, or life event beyond the supplied context."""
     if content and any(

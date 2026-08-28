@@ -12,10 +12,12 @@ from architect_engine.synthesis import section_synthesis_rule_issues
 
 
 TITLES = (
+    "Your Big Three",
     "Your Inner Wiring",
     "Your Relationship Blueprint",
     "Your Career & Purpose Blueprint",
     "Your Growth Blueprint",
+    "Your Blueprint Summary",
 )
 
 
