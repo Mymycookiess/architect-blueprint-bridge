@@ -38,6 +38,55 @@ class VisualQATests(unittest.TestCase):
         self.assertNotIn("**", text)
         self.assertFalse(diagnostics["markdown_bold_markers"])
 
+    def test_customer_identity_birth_details_and_sentence_dashes_are_polished(self):
+        payload = {
+            "mode": "FULL",
+            "customer": {
+                "name": "paul miller",
+                "birth_date": "1997-06-04",
+                "birth_time_local": "06:07",
+                "birth_time_status": "KNOWN",
+                "birth_location_display": "Los Angeles ca usa",
+            },
+            "sections": [{
+                "title": "Birth Chart Snapshot",
+                "status": "INCLUDED",
+                "content": "Choose clarity—not confusion—and keep moving.",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "polished-details.pdf"
+            _, diagnostics = render_pdf(payload, str(path), return_diagnostics=True)
+            text = "\n".join(page.extract_text() or "" for page in PdfReader(path).pages)
+        self.assertIn("Paul Miller", text)
+        self.assertIn("June 4, 1997", text)
+        self.assertIn("6:07 AM", text)
+        self.assertIn("Los Angeles, California, USA", text)
+        self.assertIn("clarity - not confusion - and", text)
+        self.assertNotIn("clarity-not", text)
+        self.assertEqual(diagnostics["joined_dash_words"], [])
+
+    def test_major_chapters_share_a_page_when_space_is_available(self):
+        payload = {
+            "customer": {"name": "Paul Miller"},
+            "sections": [
+                {
+                    "title": "Your Relationship Blueprint",
+                    "status": "INCLUDED",
+                    "content": "Connection becomes clearer through honest communication. " * 20,
+                },
+                {
+                    "title": "Your Career & Purpose Blueprint",
+                    "status": "INCLUDED",
+                    "content": "Purpose grows through focused contribution. " * 10,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "balanced-chapters.pdf"
+            pages, _ = render_pdf(payload, str(path), return_diagnostics=True)
+        self.assertEqual(pages, 3)
+
     def test_customer_pdf_embeds_spacing_safe_fonts(self):
         payload = {
             "mode": "FULL",

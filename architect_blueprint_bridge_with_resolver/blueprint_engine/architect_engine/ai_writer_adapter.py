@@ -38,10 +38,10 @@ SECTION_WORD_TARGETS = {
     "Your Career & Purpose Blueprint": 640,
     "Your Growth Blueprint": 550,
     "Alignment & Action": 510,
-    "Personalized Action Plan": 720,
+    "Personalized Action Plan": 650,
     "Your First / Next Brick": 380,
     "Your Blueprint Summary": 550,
-    "Your Next Chapter / Continue": 380,
+    "Your Next Chapter / Continue": 300,
 }
 
 def _section_id(title: str) -> str:

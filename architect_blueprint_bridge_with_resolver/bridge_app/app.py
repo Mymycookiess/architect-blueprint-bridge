@@ -1017,10 +1017,10 @@ For a FULL report, use these approximate section word budgets:
 - Your Career & Purpose Blueprint: 650
 - Your Growth Blueprint: 550
 - Alignment & Action: 500
-- Personalized Action Plan: 750
+- Personalized Action Plan: 650
 - Your First / Next Brick: 350
 - Your Blueprint Summary: 550
-- Your Next Chapter / Continue: 350
+- Your Next Chapter / Continue: 300
 
 The Personalized Action Plan must contain exactly:
 - 3 strengths

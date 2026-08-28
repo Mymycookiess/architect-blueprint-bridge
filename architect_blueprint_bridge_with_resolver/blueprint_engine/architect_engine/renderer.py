@@ -3,6 +3,7 @@ from __future__ import annotations
 import html
 import os
 import re
+from datetime import datetime
 
 import reportlab
 from reportlab.lib import colors
@@ -117,6 +118,15 @@ MAJOR_SECTION_STARTS = {
     "Your Blueprint Summary",
 }
 
+ACTION_PLAN_HEADINGS = {
+    "3 Strengths",
+    "3 Supporting Habits",
+    "3 Patterns to Watch",
+    "1 Challenge",
+    "1 Encouraging Message",
+    "1 Next Brick",
+}
+
 
 def _customer_text(text: str) -> str:
     cleaned = html.unescape(str(text or "")).replace("\u00a0", " ").strip()
@@ -130,13 +140,17 @@ def _customer_text(text: str) -> str:
 
 def _safe_markup(text: str) -> str:
     """Escape customer text, then convert the supported Markdown emphasis to ReportLab markup."""
-    text = html.escape(_customer_text(text), quote=False)
+    # The AI writer uses typographic dashes as sentence punctuation. Production
+    # fonts must not receive a bare replacement hyphen ("clarity-not").
+    # Normalize only em/en dashes so legitimate compounds remain untouched.
+    text = re.sub(r"\s*[—–]\s*", " - ", _customer_text(text))
+    text = re.sub(r"\s+", " ", text).strip()
+    text = html.escape(text, quote=False)
     text = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", text)
     # Remove unmatched emphasis delimiters after valid pairs have become real
     # PDF bold formatting. A bare delimiter has no customer-facing meaning.
     text = text.replace("**", "").replace("__", "")
-    text = text.replace("—", "-").replace("–", "-")
     return text
 
 
@@ -165,7 +179,9 @@ def _styles():
         "chapter_rule": ParagraphStyle("chapter_rule", fontName="BlueprintSans", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
         "heading": ParagraphStyle("heading", fontName="BlueprintSans-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
         "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "closing_body": ParagraphStyle("closing_body", fontName="BlueprintSans", fontSize=9.95, leading=14.2, textColor=INK, alignment=TA_LEFT, spaceAfter=6.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
         "list": ParagraphStyle("list", parent=None, fontName="BlueprintSans", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
+        "action_heading": ParagraphStyle("action_heading", fontName="BlueprintSans-Bold", fontSize=11.3, leading=14.5, textColor=GOLD, backColor=colors.HexColor("#F1EEE7"), borderColor=RULE, borderWidth=0.45, borderPadding=(6, 8, 6, 8), spaceBefore=10, spaceAfter=7, keepWithNext=True),
         "journey_title": ParagraphStyle("journey_title", fontName="BlueprintSans-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
         "journey_stage": ParagraphStyle("journey_stage", fontName="BlueprintSans-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
         "journey_body": ParagraphStyle("journey_body", fontName="BlueprintSans", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
@@ -177,8 +193,41 @@ def _styles():
 def _customer_name(payload: dict) -> str:
     customer = payload.get("customer") or {}
     if isinstance(customer, dict):
-        return str(customer.get("name") or "Your Blueprint").strip()
-    return str(customer or "Your Blueprint").strip()
+        name = str(customer.get("name") or "Your Blueprint").strip()
+    else:
+        name = str(customer or "Your Blueprint").strip()
+    return name.title() if name.islower() or name.isupper() else name
+
+
+def _display_birth_date(value) -> str:
+    raw = str(value or "").strip()
+    try:
+        parsed = datetime.strptime(raw, "%Y-%m-%d")
+        return f"{parsed.strftime('%B')} {parsed.day}, {parsed.year}"
+    except ValueError:
+        return raw or "Not provided"
+
+
+def _display_birth_time(value) -> str:
+    raw = str(value or "").strip()
+    for pattern in ("%H:%M", "%H:%M:%S"):
+        try:
+            return datetime.strptime(raw, pattern).strftime("%I:%M %p").lstrip("0")
+        except ValueError:
+            pass
+    return raw or "Unknown"
+
+
+def _display_birth_location(value) -> str:
+    raw = re.sub(r"\s+", " ", str(value or "").strip())
+    if not raw:
+        return "Not provided"
+    match = re.match(r"^(.*?)(?:,|\s)+(ca|california)(?:,|\s)+(usa|us|united states)$", raw, re.I)
+    if match:
+        city = match.group(1).strip(" ,").title() if match.group(1).islower() else match.group(1).strip(" ,")
+        return f"{city}, California, USA"
+    polished = raw.title() if raw.islower() or raw.isupper() else raw
+    return re.sub(r"\bUsa\b", "USA", polished)
 
 
 def _birth_rows(payload: dict, styles: dict):
@@ -186,10 +235,10 @@ def _birth_rows(payload: dict, styles: dict):
     if not isinstance(customer, dict):
         return []
     mode = payload.get("mode") or ""
-    date = customer.get("birth_date") or "Not provided"
-    time = customer.get("birth_time_local") or "Unknown"
+    date = _display_birth_date(customer.get("birth_date"))
+    time = _display_birth_time(customer.get("birth_time_local"))
     status = customer.get("birth_time_status") or ("KNOWN" if customer.get("birth_time_local") else "UNKNOWN")
-    location = customer.get("birth_location_display") or "Not provided"
+    location = _display_birth_location(customer.get("birth_location_display"))
     scope = "Full chart calculation" if mode == "FULL" else "Time-independent chart calculation; Rising and houses omitted"
     if str(status).upper() != "KNOWN":
         time = "Unknown / not supplied"
@@ -202,7 +251,7 @@ def _birth_rows(payload: dict, styles: dict):
     return [[Paragraph(k, styles["birth_label"]), Paragraph(_safe_markup(v), styles["birth_value"])] for k, v in pairs]
 
 
-def _content_flowables(content: str, styles: dict):
+def _content_flowables(content: str, styles: dict, section_title: str = ""):
     flow = []
     blocks = [b.strip() for b in re.split(r"\n\s*\n", content or "") if b.strip()]
     for block in blocks:
@@ -212,12 +261,17 @@ def _content_flowables(content: str, styles: dict):
         def flush_body():
             if body_buffer:
                 text = " ".join(body_buffer)
-                flow.append(Paragraph(_safe_markup(text), styles["body"]))
+                style = styles["closing_body"] if section_title == "Your Next Chapter / Continue" else styles["body"]
+                flow.append(Paragraph(_safe_markup(text), style))
                 body_buffer.clear()
 
         for line in lines:
             stripped = re.sub(r"^#{1,6}\s+", "", line).strip()
-            if _is_heading(stripped):
+            plain = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", stripped).strip()
+            if section_title == "Personalized Action Plan" and plain in ACTION_PLAN_HEADINGS:
+                flush_body()
+                flow.append(Paragraph(_safe_markup(plain), styles["action_heading"]))
+            elif _is_heading(stripped):
                 flush_body()
                 flow.append(Paragraph(_safe_markup(stripped), styles["heading"]))
             elif _is_list(stripped):
@@ -248,6 +302,19 @@ class BlueprintDocTemplate(BaseDocTemplate):
             canv.rect(0.42 * inch, 0.42 * inch, PAGE_W - 0.84 * inch, PAGE_H - 0.84 * inch, fill=0, stroke=1)
             canv.setLineWidth(0.35)
             canv.rect(0.50 * inch, 0.50 * inch, PAGE_W - inch, PAGE_H - inch, fill=0, stroke=1)
+            # A restrained architectural mark gives the paid cover a distinct
+            # identity without depending on an external image asset.
+            canv.setStrokeColor(GOLD)
+            canv.setLineWidth(0.8)
+            center_x = PAGE_W / 2
+            mark_y = PAGE_H - 1.03 * inch
+            canv.line(center_x - 28, mark_y, center_x - 7, mark_y)
+            canv.line(center_x + 7, mark_y, center_x + 28, mark_y)
+            canv.saveState()
+            canv.translate(center_x, mark_y)
+            canv.rotate(45)
+            canv.rect(-4, -4, 8, 8, fill=0, stroke=1)
+            canv.restoreState()
         if doc.page > 1:
             canv.setStrokeColor(RULE)
             canv.setLineWidth(0.45)
@@ -308,14 +375,11 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         title = str(section.get("title") or "").strip()
         if title.upper() in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER"):
             continue
-        if title in MAJOR_SECTION_STARTS:
-            if story and not isinstance(story[-1], PageBreak):
-                story.append(PageBreak())
-        else:
-            # Start a shorter companion section on the current page when there
-            # is enough room for its heading and a meaningful opening passage.
-            # This avoids nearly empty continuation pages without crowding.
-            story.append(CondPageBreak(2.55 * inch))
+        # Start chapters on the current page when there is room for the complete
+        # title treatment and a meaningful opening passage. This keeps the
+        # luxury transitions while preventing half-empty ending pages.
+        minimum_opening = 3.30 * inch if title in MAJOR_SECTION_STARTS else 2.45 * inch
+        story.append(CondPageBreak(minimum_opening))
         display_title = DISPLAY_TITLES.get(title, title)
         story.extend([
             Spacer(1, 0.22 * inch),
@@ -342,13 +406,13 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
                     birth_table,
                     Spacer(1, 0.18 * inch),
                 ])
-        flow = _content_flowables(str(section.get("content") or ""), styles)
+        flow = _content_flowables(str(section.get("content") or ""), styles, title)
         # Keep headings with the paragraph that follows them whenever possible.
         grouped = []
         i = 0
         while i < len(flow):
             current = flow[i]
-            if isinstance(current, Paragraph) and current.style.name == "heading" and i + 1 < len(flow):
+            if isinstance(current, Paragraph) and current.style.name in {"heading", "action_heading"} and i + 1 < len(flow):
                 grouped.append(KeepTogether([current, flow[i + 1]]))
                 i += 2
             else:
@@ -360,9 +424,8 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
 
     # Customer-facing diagnostics must inspect the artifact customers receive,
     # not the Markdown-bearing source used to create it.
-    rendered_text = "\n".join(
-        page.extract_text() or "" for page in PdfReader(out_path).pages
-    )
+    rendered_pages = [page.extract_text() or "" for page in PdfReader(out_path).pages]
+    rendered_text = "\n".join(rendered_pages)
 
     visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
@@ -372,6 +435,19 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", rendered_text, re.I)),
         "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", rendered_text, re.I))),
         "markdown_bold_markers": bool(re.search(r"\*\*|__", rendered_text)),
+        "joined_dash_words": sorted(word for word in set(re.findall(r"\b[A-Za-z]+-[A-Za-z]+\b", rendered_text))
+            if word not in {
+                "self-expression", "well-being", "self-definition", "self-understanding",
+                "self-knowledge", "follow-through", "self-sacrifice", "self-improvement",
+                "self-criticism", "over-responsibility", "outward-facing", "inward-facing",
+                "group-oriented", "future-oriented", "long-range", "big-picture",
+                "whole-chart", "through-line", "values-based", "well-aimed",
+                "hands-on", "one-sentence", "self-presentation", "self-recognition",
+                "push-pull", "over-functioning", "less-visible", "larger-ranging",
+                "self-directed", "problem-solver",
+                "fifteen-minute", "thirty-day", "th-house",
+            } and not re.match(r"^[A-Z][a-z]+-[A-Z][a-z]+$", word)),
+        "page_word_counts": [len(re.findall(r"\b\w+\b", page)) for page in rendered_pages],
         "page_body_lines": [],
     }
     page_no = max(1, getattr(doc, "_blueprint_page_count", 1))
