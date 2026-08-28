@@ -8,6 +8,7 @@ SYNTHESIS_HEAVY_SECTIONS = (
     "Your Relationship Blueprint",
     "Your Career & Purpose Blueprint",
     "Your Growth Blueprint",
+    "Personalized Action Plan",
     "Your Blueprint Summary",
 )
 SPECIFIC_CHAPTER_PRIORITY = {
@@ -54,6 +55,16 @@ def _core_paragraphs(content):
     ]
 
 
+def _substantial_paragraphs(content):
+    results=[]
+    for paragraph in (content or "").split("\n\n"):
+        normalized=_normalize_sentence(paragraph)
+        words=normalized.split()
+        if len(words)>=32:
+            results.append(normalized)
+    return results
+
+
 def section_progression_rules(title):
     if title in ("Your Core Identity — Sun","Your Emotional World — Moon","How the World Meets You — Rising"):
         return "Own and introduce this placement's core lived pattern. Keep cross-references brief so later chapters have room to apply and integrate it."
@@ -61,6 +72,8 @@ def section_progression_rules(title):
         return "Integrate the three layers and explain their interaction; do not repeat the standalone Sun, Moon, or Rising explanation."
     if title in ("Your Inner Wiring","Your Relationship Blueprint","Your Career & Purpose Blueprint","Your Growth Blueprint"):
         return "Apply earlier chart discoveries to this chapter's specific life area. A callback must add a new context, consequence, tension, choice, or application and remain concise."
+    if title=="Personalized Action Plan":
+        return "Convert earlier insights into decisions and behaviors. Do not summarize or restate previous chapters; every callback must become a specific action, habit, pattern-to-watch, challenge, or Next Brick."
     if title=="Your Blueprint Summary":
         return "Name the concise whole-chart through-line without copying or rephrasing entire earlier explanations. End with integration, not recap."
     return "Advance this chapter's purpose without repeating an explanation already owned by another chapter."
@@ -86,9 +99,26 @@ def report_repetition_rule_issues(report):
             for paragraph in _core_paragraphs(section.get("content","")):
                 for other_title,other in paragraphs:
                     ratio=SequenceMatcher(None,other,paragraph).ratio()
-                    if ratio>=0.88:
+                    if ratio>=0.86:
                         issues.append(f"Near-duplicate core insight in {other_title} and {section.get('title')} ({ratio:.2f})")
                 paragraphs.append((section.get("title"),paragraph))
+
+    # Catch substantial passages that are rephrased too closely across chapters,
+    # not just identical sentences. This is intentionally conservative so normal
+    # short callbacks are still allowed.
+    substantial=[]
+    for section in report.get("sections",[]):
+        if section.get("status")!="INCLUDED":
+            continue
+        title=section.get("title")
+        for paragraph in _substantial_paragraphs(section.get("content","")):
+            for other_title,other in substantial:
+                if other_title==title:
+                    continue
+                ratio=SequenceMatcher(None,other,paragraph).ratio()
+                if ratio>=0.91:
+                    issues.append(f"Near-duplicate substantial passage in {other_title} and {title} ({ratio:.2f})")
+            substantial.append((title,paragraph))
 
     summary=next((section for section in report.get("sections",[]) if section.get("title")=="Your Blueprint Summary"),{})
     summary_paragraphs={normalized for _,normalized in meaningful_sentences(summary.get("content",""))}
