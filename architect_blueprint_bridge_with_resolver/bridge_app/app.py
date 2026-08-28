@@ -30,6 +30,7 @@ from architect_engine.content_rules import report_content_rule_issues, section_c
 from architect_engine.confidence_rules import disclaimer_revision_instruction, repetitive_disclaimer_phrases, report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
 from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
+from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
@@ -796,6 +797,7 @@ def ai_writer(
             "additionalProperties": False,
         }
         revision_instruction = ""
+        section_anchor = context.get("chart_facts", {}).get("synthesis_anchors", {}).get(section_name, {})
         if payload.section_draft:
             draft_content = str(payload.section_draft.get("content") or "")
             revision_instruction = f"""
@@ -803,6 +805,7 @@ Revise and expand the supplied existing_section into a complete replacement.
 Preserve its grounded ideas, remove repetition, and reach the requested word
 target. Return the entire revised section, not an addendum.
 {disclaimer_revision_instruction(draft_content)}
+{section_synthesis_revision_instruction(section_name, section_anchor, draft_content)}
 """
         section_payload = {
             "model": OPENAI_MODEL,
@@ -814,6 +817,7 @@ Target approximately {target} words and stay within 15 percent of that target.
 {section_confidence_rules(section_name, context.get("mode"))}
 {section_emotional_rules(section_name)}
 {section_progression_rules(section_name)}
+{section_synthesis_revision_instruction(section_name, section_anchor)}
 {revision_instruction}
 Use only this section's supplied data and the verified chart facts in the input.
 Do not use outside astrology knowledge or invent facts. Develop polished,
@@ -830,6 +834,7 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
                 "customer": context.get("customer", ""),
                 "mode": context.get("mode", ""),
                 "allowed_evidence_refs": allowed_section_refs,
+                "section_synthesis_anchor": section_anchor,
                 "existing_section": payload.section_draft,
             }),
             "text": {"format": {
@@ -855,6 +860,28 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
             section = _call_openai(correction_payload, "section disclaimer revision")
             section["title"] = section_name
             section["section_id"] = section_name.lower().replace(" ", "_").replace("/", "_")
+        synthesis_issues = section_synthesis_rule_issues(
+            section_name,
+            section.get("content", ""),
+            section_anchor,
+        )
+        if synthesis_issues:
+            correction_payload = dict(section_payload)
+            correction_payload["instructions"] = (
+                section_payload["instructions"]
+                + "\n"
+                + section_synthesis_revision_instruction(
+                    section_name,
+                    section_anchor,
+                    section.get("content", ""),
+                )
+            )
+            correction_input = json.loads(section_payload["input"])
+            correction_input["existing_section"] = section
+            correction_payload["input"] = json.dumps(correction_input)
+            section = _call_openai(correction_payload, "section synthesis revision")
+            section["title"] = section_name
+            section["section_id"] = section_name.lower().replace(" ", "_").replace("/", "_")
         if not set(section.get("evidence_refs", [])).issubset(set(allowed_section_refs)):
             raise HTTPException(
                 status_code=422,
@@ -863,6 +890,7 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
         content_issues = section_content_rule_issues(section_name, section.get("content", ""))
         content_issues.extend(section_confidence_rule_issues(section_name,section.get("content",""),context.get("mode")))
         content_issues.extend(section_emotional_rule_issues(section_name,section.get("content",""),section.get("status")))
+        content_issues.extend(section_synthesis_rule_issues(section_name,section.get("content",""),section_anchor))
         if content_issues:
             raise HTTPException(status_code=422, detail="; ".join(content_issues))
         return section

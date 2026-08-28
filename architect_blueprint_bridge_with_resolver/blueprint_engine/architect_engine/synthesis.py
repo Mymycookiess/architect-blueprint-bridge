@@ -33,6 +33,42 @@ def section_synthesis_rules(title):
     return "Keep the chapter centered on its main subject. Use at most one light cross-reference to another validated factor and save deeper whole-chart integration for later synthesis chapters."
 
 
+def referenced_validated_factors(content, anchor):
+    return [
+        factor for factor in anchor.get("factors", [])
+        if f'{factor["sign"]} {factor["label"]}'.lower() in (content or "").lower()
+    ]
+
+
+def section_synthesis_rule_issues(title, content, anchor):
+    factors = anchor.get("factors", [])
+    if title in SYNTHESIS_HEAVY_SECTIONS and len(factors) >= 2:
+        referenced = referenced_validated_factors(content, anchor)
+        if len(referenced) < 2:
+            return [f"{title}: fewer than two validated factors are integrated"]
+    return []
+
+
+def section_synthesis_revision_instruction(title, anchor, content=""):
+    factors = anchor.get("factors", [])
+    if title not in SYNTHESIS_HEAVY_SECTIONS or len(factors) < 2:
+        return ""
+    names = ", ".join(f'{factor["sign"]} {factor["label"]}' for factor in factors)
+    referenced = referenced_validated_factors(content, anchor)
+    instruction = (
+        "Naturally integrate at least two of these section-approved validated factors "
+        f"using their exact sign-and-factor names: {names}. Explain their interaction "
+        "in this chapter's life area rather than listing them. Do not introduce any "
+        "placement, house, aspect, Rising, or Midheaven outside the supplied anchor."
+    )
+    if content and len(referenced) < 2:
+        instruction += (
+            f" The supplied draft names only {len(referenced)} validated factor(s); "
+            "rewrite the complete section so at least two are integrated."
+        )
+    return instruction
+
+
 def _factor(chart, key):
     if key in APPROVED_PLANETS:
         placement=chart.get("placements",{}).get(key,{})
@@ -206,12 +242,7 @@ def report_synthesis_rule_issues(context, report):
         content=str(by_title.get(section,{}).get("content") or "")
         factors=anchor.get("factors",[])
         if len(factors)>=2:
-            referenced=[
-                factor for factor in factors
-                if f'{factor["sign"]} {factor["label"]}'.lower() in content.lower()
-            ]
-            if len(referenced)<2:
-                issues.append(f"{section}: fewer than two validated factors are integrated")
+            issues.extend(section_synthesis_rule_issues(section, content, anchor))
         for paragraph in content.split("\n\n"):
             clean=paragraph.strip()
             if clean.startswith(SYNTHESIS_PREFIXES):

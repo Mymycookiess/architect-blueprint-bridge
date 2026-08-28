@@ -8,7 +8,7 @@ from urllib.request import Request, urlopen
 
 from architect_engine.writer import SECTION_ORDER
 from architect_engine.content_rules import section_content_rule_issues, section_writing_rules
-from architect_engine.synthesis import section_synthesis_rules
+from architect_engine.synthesis import section_synthesis_rule_issues, section_synthesis_rules
 from architect_engine.confidence_rules import section_confidence_rule_issues, section_confidence_rules
 from architect_engine.emotional_rules import report_emotional_rule_issues, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
@@ -76,7 +76,7 @@ def _extract_section(result: object, title: str) -> dict:
     section = dict(section)
     section["title"] = title
     section["section_id"] = _section_id(title)
-    section.setdefault("status", "INCLUDED" if section["content"].strip() else "REVIEW_REQUIRED")
+    section["status"] = "INCLUDED" if section["content"].strip() else "REVIEW_REQUIRED"
     section.setdefault("evidence_refs", [])
     return section
 
@@ -141,15 +141,17 @@ def _request_section_once(context, report_id, endpoint, token, title, draft=None
 def _request_section(context, report_id, endpoint, token, title):
     section = _request_section_once(context, report_id, endpoint, token, title)
     target = SECTION_WORD_TARGETS[title]
-    if section_content_rule_issues(title, section.get("content", "")) or section_confidence_rule_issues(title,section.get("content",""),context.get("mode")) or section_emotional_rule_issues(title,section.get("content",""),section.get("status")) or _word_count(section) < int(target * 0.85):
+    anchor = context.get("chart_facts", {}).get("synthesis_anchors", {}).get(title, {})
+    if section_content_rule_issues(title, section.get("content", "")) or section_confidence_rule_issues(title,section.get("content",""),context.get("mode")) or section_emotional_rule_issues(title,section.get("content",""),section.get("status")) or section_synthesis_rule_issues(title,section.get("content",""),anchor) or _word_count(section) < int(target * 0.85):
         expanded = _request_section_once(
             context, report_id, endpoint, token, title, draft=section,
         )
-        if not section_content_rule_issues(title, expanded.get("content", "")) and not section_confidence_rule_issues(title,expanded.get("content",""),context.get("mode")) and not section_emotional_rule_issues(title,expanded.get("content",""),expanded.get("status")):
+        if not section_content_rule_issues(title, expanded.get("content", "")) and not section_confidence_rule_issues(title,expanded.get("content",""),context.get("mode")) and not section_emotional_rule_issues(title,expanded.get("content",""),expanded.get("status")) and not section_synthesis_rule_issues(title,expanded.get("content",""),anchor):
             section = expanded
     issues = section_content_rule_issues(title, section.get("content", ""))
     issues.extend(section_confidence_rule_issues(title,section.get("content",""),context.get("mode")))
     issues.extend(section_emotional_rule_issues(title,section.get("content",""),section.get("status")))
+    issues.extend(section_synthesis_rule_issues(title,section.get("content",""),anchor))
     if issues:
         raise RuntimeError(f"AI section violates content rules ({title}): {'; '.join(issues)}")
     return section
