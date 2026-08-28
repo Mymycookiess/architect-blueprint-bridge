@@ -173,6 +173,7 @@ def _send_resend(email: str, download_url: str, idempotency_key: str) -> str | N
             "Authorization": f'Bearer {_required_env("RESEND_API_KEY")}',
             "Content-Type": "application/json",
             "Idempotency-Key": idempotency_key,
+            "User-Agent": "architect-blueprint/1.0",
         },
         method="POST",
     )

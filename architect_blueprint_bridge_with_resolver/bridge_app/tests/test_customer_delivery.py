@@ -172,6 +172,7 @@ class CustomerDeliveryTests(unittest.TestCase):
         self.assertEqual(captured["request"].method, "POST")
         self.assertEqual(captured["request"].get_header("Authorization"), "Bearer resend-key")
         self.assertEqual(captured["request"].get_header("Content-type"), "application/json")
+        self.assertEqual(captured["request"].get_header("User-agent"), "architect-blueprint/1.0")
         self.assertEqual(payload["from"], DELIVERY_ENV["BLUEPRINT_FROM_EMAIL"])
         self.assertEqual(payload["to"], ["customer@example.com"])
         self.assertEqual(payload["subject"], "Your Architect Blueprint Is Ready")
