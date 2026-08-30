@@ -6,9 +6,11 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
@@ -17,6 +19,12 @@ PDF_RELATIVE_PATH = Path("engine_output") / "05_architect_blueprint.pdf"
 MANIFEST_RELATIVE_PATH = Path("engine_output") / "00_manifest.json"
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
+_shopify_token_lock = threading.Lock()
+_shopify_token_cache: dict[str, object] = {
+    "access_token": None,
+    "expires_at": 0.0,
+    "cache_key": None,
+}
 
 
 class ResendHTTPFailure(RuntimeError):
@@ -111,6 +119,7 @@ def _sanitize_text(detail: str, email: str = "") -> str:
         os.getenv("RESEND_API_KEY", ""),
         os.getenv("R2_ACCOUNT_ID", ""),
         os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", ""),
+        os.getenv("SHOPIFY_CLIENT_SECRET", ""),
         os.getenv("SHOPIFY_SHOP_DOMAIN", ""),
         email,
     )
@@ -202,26 +211,98 @@ def _send_resend(email: str, download_url: str, idempotency_key: str) -> str | N
 
 
 def _shopify_fulfillment_configured() -> bool:
-    return bool(
-        os.getenv("SHOPIFY_SHOP_DOMAIN", "").strip()
-        and os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip()
+    has_domain = bool(os.getenv("SHOPIFY_SHOP_DOMAIN", "").strip())
+    has_legacy_token = bool(os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip())
+    has_client_credentials = bool(
+        os.getenv("SHOPIFY_CLIENT_ID", "").strip()
+        and os.getenv("SHOPIFY_CLIENT_SECRET", "").strip()
     )
+    return has_domain and (has_legacy_token or has_client_credentials)
 
 
-def _shopify_graphql(query: str, variables: dict) -> dict:
+def _shopify_domain() -> str:
     domain = _required_env("SHOPIFY_SHOP_DOMAIN").lower()
     if domain.startswith("http://") or domain.startswith("https://") or "/" in domain:
         raise RuntimeError("SHOPIFY_SHOP_DOMAIN must be a bare myshopify.com domain")
     if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.myshopify\.com", domain):
         raise RuntimeError("SHOPIFY_SHOP_DOMAIN must end in .myshopify.com")
+    return domain
 
+
+def _shopify_access_token() -> str:
+    """Return a valid Admin API token without requiring daily manual rotation."""
+    legacy_token = os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip()
+    if legacy_token:
+        return legacy_token
+
+    domain = _shopify_domain()
+    client_id = _required_env("SHOPIFY_CLIENT_ID")
+    client_secret = _required_env("SHOPIFY_CLIENT_SECRET")
+    cache_key = hashlib.sha256(f"{domain}\0{client_id}".encode("utf-8")).hexdigest()
+
+    with _shopify_token_lock:
+        now = time.time()
+        cached_token = _shopify_token_cache.get("access_token")
+        if (
+            cached_token
+            and _shopify_token_cache.get("cache_key") == cache_key
+            and now < float(_shopify_token_cache.get("expires_at") or 0) - 60
+        ):
+            return str(cached_token)
+
+        request = Request(
+            f"https://{domain}/admin/oauth/access_token",
+            data=urlencode(
+                {
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "architect-blueprint/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = _sanitize_text(exc.read().decode("utf-8", errors="replace"))
+            raise ShopifyHTTPFailure(
+                exc.code, detail or "Shopify token request failed"
+            ) from None
+
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError("Shopify token response did not include an access token")
+        try:
+            expires_in = int(payload.get("expires_in") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Shopify token response had an invalid expiration") from exc
+        if expires_in <= 60:
+            raise RuntimeError("Shopify token response had an invalid expiration")
+
+        _shopify_token_cache.update(
+            {
+                "access_token": access_token,
+                "expires_at": now + expires_in,
+                "cache_key": cache_key,
+            }
+        )
+        return access_token
+
+
+def _shopify_graphql(query: str, variables: dict) -> dict:
+    domain = _shopify_domain()
     version = os.getenv("SHOPIFY_API_VERSION", "2026-07").strip() or "2026-07"
     request = Request(
         f"https://{domain}/admin/api/{version}/graphql.json",
         data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
         headers={
             "Content-Type": "application/json",
-            "X-Shopify-Access-Token": _required_env("SHOPIFY_ADMIN_ACCESS_TOKEN"),
+            "X-Shopify-Access-Token": _shopify_access_token(),
             "User-Agent": "architect-blueprint/1.0",
         },
         method="POST",

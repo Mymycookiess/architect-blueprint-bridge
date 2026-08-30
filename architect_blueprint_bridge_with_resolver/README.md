@@ -38,12 +38,18 @@ directory, independently from the Blueprint generation status.
 
 After Resend accepts the delivery email, the bridge can automatically fulfill
 only the delivered Blueprint line item in Shopify. This requires a Shopify
-Admin API token with `read_merchant_managed_fulfillment_orders` and
-`write_merchant_managed_fulfillment_orders` access. Configure:
+Admin API access with `read_merchant_managed_fulfillment_orders` and
+`write_merchant_managed_fulfillment_orders` scopes. Configure:
 
 - `SHOPIFY_SHOP_DOMAIN` (the bare `store-name.myshopify.com` domain)
-- `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `SHOPIFY_CLIENT_ID`
+- `SHOPIFY_CLIENT_SECRET`
 - `SHOPIFY_API_VERSION` (optional; defaults to `2026-07`)
+
+The bridge exchanges the client credentials for a short-lived Shopify token,
+caches it in memory, and refreshes it automatically before expiry. A legacy
+`SHOPIFY_ADMIN_ACCESS_TOKEN` remains supported during migration, but new Dev
+Dashboard apps should use client credentials.
 
 The fulfillment is created with `notifyCustomer: false` because the customer
 already receives the branded Blueprint delivery email. Mixed orders are safe:
