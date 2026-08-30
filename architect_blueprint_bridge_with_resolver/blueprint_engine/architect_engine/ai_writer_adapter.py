@@ -2,8 +2,9 @@
 from __future__ import annotations
 import json, os
 import re
+import time
 from concurrent.futures import ThreadPoolExecutor, as_completed
-from urllib.error import HTTPError
+from urllib.error import HTTPError, URLError
 from urllib.request import Request, urlopen
 
 from architect_engine.writer import SECTION_ORDER
@@ -43,6 +44,10 @@ SECTION_WORD_TARGETS = {
     "Your Blueprint Summary": 550,
     "Your Next Chapter / Continue": 300,
 }
+
+TRANSIENT_WRITER_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+WRITER_REQUEST_ATTEMPTS = 3
+WRITER_RETRY_DELAYS = (2, 5)
 
 def _section_id(title: str) -> str:
     return title.lower().replace(" ", "_").replace("/", "_")
@@ -118,23 +123,52 @@ def _request_section_once(context, report_id, endpoint, token, title, draft=None
     headers={"Content-Type":"application/json"}
     if token: headers["Authorization"]=f"Bearer {token}"
     req=Request(endpoint,data=body,headers=headers,method="POST")
-    try:
-        with urlopen(req,timeout=300) as resp:
-            result=json.loads(resp.read().decode("utf-8"))
-    except HTTPError as exc:
-        if exc.code == 422:
-            diagnostic = {
-                "section": title,
-                "status": exc.code,
-                "detail": _safe_422_detail(exc.read()),
-                "attempt": "retry" if draft is not None else "first_draft",
-            }
+    for request_attempt in range(1, WRITER_REQUEST_ATTEMPTS + 1):
+        try:
+            with urlopen(req,timeout=300) as resp:
+                result=json.loads(resp.read().decode("utf-8"))
+            break
+        except HTTPError as exc:
+            if exc.code == 422:
+                diagnostic = {
+                    "section": title,
+                    "status": exc.code,
+                    "detail": _safe_422_detail(exc.read()),
+                    "attempt": "retry" if draft is not None else "first_draft",
+                }
+                print(
+                    "AI_WRITER_VALIDATION_FAILURE "
+                    + json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":")),
+                    flush=True,
+                )
+                raise
+            if (
+                exc.code not in TRANSIENT_WRITER_HTTP_CODES
+                or request_attempt == WRITER_REQUEST_ATTEMPTS
+            ):
+                raise
             print(
-                "AI_WRITER_VALIDATION_FAILURE "
-                + json.dumps(diagnostic, ensure_ascii=True, separators=(",", ":")),
+                "AI_WRITER_TRANSIENT_RETRY "
+                + json.dumps({
+                    "section": title,
+                    "status": exc.code,
+                    "attempt": request_attempt,
+                }, separators=(",", ":")),
                 flush=True,
             )
-        raise
+        except (URLError, TimeoutError) as exc:
+            if request_attempt == WRITER_REQUEST_ATTEMPTS:
+                raise
+            print(
+                "AI_WRITER_TRANSIENT_RETRY "
+                + json.dumps({
+                    "section": title,
+                    "status": type(exc).__name__,
+                    "attempt": request_attempt,
+                }, separators=(",", ":")),
+                flush=True,
+            )
+        time.sleep(WRITER_RETRY_DELAYS[request_attempt - 1])
     return _extract_section(result, title)
 
 
