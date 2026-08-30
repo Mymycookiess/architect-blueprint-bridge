@@ -6,9 +6,11 @@ import json
 import os
 import re
 import threading
+import time
 from datetime import datetime, timezone
 from pathlib import Path
 from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
 
@@ -17,6 +19,12 @@ PDF_RELATIVE_PATH = Path("engine_output") / "05_architect_blueprint.pdf"
 MANIFEST_RELATIVE_PATH = Path("engine_output") / "00_manifest.json"
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
+_shopify_token_lock = threading.Lock()
+_shopify_token_cache: dict[str, object] = {
+    "access_token": None,
+    "expires_at": 0.0,
+    "cache_key": None,
+}
 
 
 class ResendHTTPFailure(RuntimeError):
@@ -24,6 +32,13 @@ class ResendHTTPFailure(RuntimeError):
         self.status = status
         self.detail = detail
         super().__init__(f"Resend HTTP {status}: {detail}")
+
+
+class ShopifyHTTPFailure(RuntimeError):
+    def __init__(self, status: int, detail: str):
+        self.status = status
+        self.detail = detail
+        super().__init__(f"Shopify HTTP {status}: {detail}")
 
 
 def _now() -> str:
@@ -62,6 +77,12 @@ def _load_state(run_dir: Path) -> dict:
         "delivered_at": None,
         "error_at": None,
         "sanitized_error_detail": None,
+        "fulfillment_status": "PENDING",
+        "fulfillment_ids": [],
+        "fulfilled_at": None,
+        "fulfillment_error_at": None,
+        "fulfillment_http_status": None,
+        "fulfillment_error_detail": None,
     }
 
 
@@ -97,6 +118,9 @@ def _sanitize_text(detail: str, email: str = "") -> str:
         os.getenv("R2_SECRET_ACCESS_KEY", ""),
         os.getenv("RESEND_API_KEY", ""),
         os.getenv("R2_ACCOUNT_ID", ""),
+        os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", ""),
+        os.getenv("SHOPIFY_CLIENT_SECRET", ""),
+        os.getenv("SHOPIFY_SHOP_DOMAIN", ""),
         email,
     )
     for secret in secrets:
@@ -186,6 +210,210 @@ def _send_resend(email: str, download_url: str, idempotency_key: str) -> str | N
     return result.get("id")
 
 
+def _shopify_fulfillment_configured() -> bool:
+    has_domain = bool(os.getenv("SHOPIFY_SHOP_DOMAIN", "").strip())
+    has_legacy_token = bool(os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip())
+    has_client_credentials = bool(
+        os.getenv("SHOPIFY_CLIENT_ID", "").strip()
+        and os.getenv("SHOPIFY_CLIENT_SECRET", "").strip()
+    )
+    return has_domain and (has_legacy_token or has_client_credentials)
+
+
+def _shopify_domain() -> str:
+    domain = _required_env("SHOPIFY_SHOP_DOMAIN").lower()
+    if domain.startswith("http://") or domain.startswith("https://") or "/" in domain:
+        raise RuntimeError("SHOPIFY_SHOP_DOMAIN must be a bare myshopify.com domain")
+    if not re.fullmatch(r"[a-z0-9][a-z0-9-]*\.myshopify\.com", domain):
+        raise RuntimeError("SHOPIFY_SHOP_DOMAIN must end in .myshopify.com")
+    return domain
+
+
+def _shopify_access_token() -> str:
+    """Return a valid Admin API token without requiring daily manual rotation."""
+    legacy_token = os.getenv("SHOPIFY_ADMIN_ACCESS_TOKEN", "").strip()
+    if legacy_token:
+        return legacy_token
+
+    domain = _shopify_domain()
+    client_id = _required_env("SHOPIFY_CLIENT_ID")
+    client_secret = _required_env("SHOPIFY_CLIENT_SECRET")
+    cache_key = hashlib.sha256(f"{domain}\0{client_id}".encode("utf-8")).hexdigest()
+
+    with _shopify_token_lock:
+        now = time.time()
+        cached_token = _shopify_token_cache.get("access_token")
+        if (
+            cached_token
+            and _shopify_token_cache.get("cache_key") == cache_key
+            and now < float(_shopify_token_cache.get("expires_at") or 0) - 60
+        ):
+            return str(cached_token)
+
+        request = Request(
+            f"https://{domain}/admin/oauth/access_token",
+            data=urlencode(
+                {
+                    "grant_type": "client_credentials",
+                    "client_id": client_id,
+                    "client_secret": client_secret,
+                }
+            ).encode("utf-8"),
+            headers={
+                "Content-Type": "application/x-www-form-urlencoded",
+                "User-Agent": "architect-blueprint/1.0",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(request, timeout=30) as response:
+                payload = json.loads(response.read().decode("utf-8"))
+        except HTTPError as exc:
+            detail = _sanitize_text(exc.read().decode("utf-8", errors="replace"))
+            raise ShopifyHTTPFailure(
+                exc.code, detail or "Shopify token request failed"
+            ) from None
+
+        access_token = str(payload.get("access_token") or "").strip()
+        if not access_token:
+            raise RuntimeError("Shopify token response did not include an access token")
+        try:
+            expires_in = int(payload.get("expires_in") or 0)
+        except (TypeError, ValueError) as exc:
+            raise RuntimeError("Shopify token response had an invalid expiration") from exc
+        if expires_in <= 60:
+            raise RuntimeError("Shopify token response had an invalid expiration")
+
+        _shopify_token_cache.update(
+            {
+                "access_token": access_token,
+                "expires_at": now + expires_in,
+                "cache_key": cache_key,
+            }
+        )
+        return access_token
+
+
+def _shopify_graphql(query: str, variables: dict) -> dict:
+    domain = _shopify_domain()
+    version = os.getenv("SHOPIFY_API_VERSION", "2026-07").strip() or "2026-07"
+    request = Request(
+        f"https://{domain}/admin/api/{version}/graphql.json",
+        data=json.dumps({"query": query, "variables": variables}).encode("utf-8"),
+        headers={
+            "Content-Type": "application/json",
+            "X-Shopify-Access-Token": _shopify_access_token(),
+            "User-Agent": "architect-blueprint/1.0",
+        },
+        method="POST",
+    )
+    try:
+        with urlopen(request, timeout=30) as response:
+            payload = json.loads(response.read().decode("utf-8"))
+    except HTTPError as exc:
+        detail = _sanitize_text(exc.read().decode("utf-8", errors="replace"))
+        raise ShopifyHTTPFailure(exc.code, detail or "Shopify request failed") from None
+
+    if payload.get("errors"):
+        raise RuntimeError(
+            "Shopify GraphQL error: " + _sanitize_text(json.dumps(payload["errors"]))
+        )
+    return payload.get("data") or {}
+
+
+def _fulfill_shopify_line_item(intake: dict) -> list[str]:
+    shopify = intake.get("_shopify") or {}
+    order_id = str(shopify.get("order_id") or "").strip()
+    line_item_id = str(shopify.get("line_item_id") or "").strip()
+    if not order_id or not line_item_id:
+        raise RuntimeError("Shopify order or line-item ID is missing")
+
+    order_gid = f"gid://shopify/Order/{order_id}"
+    line_item_gid = f"gid://shopify/LineItem/{line_item_id}"
+    query = """
+    query BlueprintFulfillmentOrders($id: ID!) {
+      order(id: $id) {
+        fulfillmentOrders(first: 50) {
+          nodes {
+            id
+            lineItems(first: 250) {
+              nodes {
+                id
+                remainingQuantity
+                lineItem { id }
+              }
+            }
+          }
+        }
+      }
+    }
+    """
+    data = _shopify_graphql(query, {"id": order_gid})
+    order = data.get("order")
+    if not order:
+        raise RuntimeError("Shopify order was not found")
+
+    matching_items = []
+    found = False
+    for fulfillment_order in (order.get("fulfillmentOrders") or {}).get("nodes") or []:
+        for fulfillment_item in (fulfillment_order.get("lineItems") or {}).get("nodes") or []:
+            if (fulfillment_item.get("lineItem") or {}).get("id") != line_item_gid:
+                continue
+            found = True
+            remaining = int(fulfillment_item.get("remainingQuantity") or 0)
+            if remaining > 0:
+                matching_items.append(
+                    {
+                        "fulfillment_order_id": fulfillment_order["id"],
+                        "fulfillment_order_line_item_id": fulfillment_item["id"],
+                        "quantity": remaining,
+                    }
+                )
+
+    if not found:
+        raise RuntimeError("Blueprint line item was not found in Shopify fulfillment orders")
+    if not matching_items:
+        return []
+
+    mutation = """
+    mutation FulfillDeliveredBlueprint($fulfillment: FulfillmentInput!) {
+      fulfillmentCreate(fulfillment: $fulfillment) {
+        fulfillment { id status }
+        userErrors { field message }
+      }
+    }
+    """
+    fulfillment_ids = []
+    for item in matching_items:
+        variables = {
+            "fulfillment": {
+                "notifyCustomer": False,
+                "lineItemsByFulfillmentOrder": [
+                    {
+                        "fulfillmentOrderId": item["fulfillment_order_id"],
+                        "fulfillmentOrderLineItems": [
+                            {
+                                "id": item["fulfillment_order_line_item_id"],
+                                "quantity": item["quantity"],
+                            }
+                        ],
+                    }
+                ],
+            }
+        }
+        result = _shopify_graphql(mutation, variables).get("fulfillmentCreate") or {}
+        if result.get("userErrors"):
+            raise RuntimeError(
+                "Shopify fulfillment error: "
+                + _sanitize_text(json.dumps(result["userErrors"]))
+            )
+        fulfillment = result.get("fulfillment") or {}
+        if not fulfillment.get("id"):
+            raise RuntimeError("Shopify did not return a fulfillment ID")
+        fulfillment_ids.append(str(fulfillment["id"]))
+    return fulfillment_ids
+
+
 def _sanitize_error(exc: Exception, email: str = "") -> str:
     return _sanitize_text(str(exc), email) or exc.__class__.__name__
 
@@ -207,12 +435,58 @@ def _log_delivery(run_id: str, state: dict) -> None:
     )
 
 
+def _log_fulfillment(run_id: str, state: dict) -> None:
+    record = {
+        "delivery_id": _delivery_id(run_id),
+        "status": state.get("fulfillment_status"),
+    }
+    if state.get("fulfillment_status") == "FULFILLMENT_ERROR":
+        if state.get("fulfillment_http_status") is not None:
+            record["http_status"] = state["fulfillment_http_status"]
+        record["detail"] = state.get("fulfillment_error_detail")
+    print(
+        "BLUEPRINT_FULFILLMENT_STATUS "
+        + json.dumps(record, ensure_ascii=True, separators=(",", ":")),
+        flush=True,
+    )
+
+
+def _attempt_shopify_fulfillment(run_dir: Path, state: dict, intake: dict) -> dict:
+    if state.get("fulfillment_status") == "FULFILLED":
+        return state
+    if not _shopify_fulfillment_configured():
+        state["fulfillment_status"] = "NOT_CONFIGURED"
+        state["fulfillment_error_detail"] = "Shopify fulfillment automation is not configured"
+        _save_state(run_dir, state)
+        _log_fulfillment(run_dir.name, state)
+        return state
+
+    state["fulfillment_status"] = "FULFILLMENT_PENDING"
+    state["fulfillment_http_status"] = None
+    state["fulfillment_error_detail"] = None
+    state["fulfillment_error_at"] = None
+    _save_state(run_dir, state)
+    _log_fulfillment(run_dir.name, state)
+    try:
+        state["fulfillment_ids"] = _fulfill_shopify_line_item(intake)
+        state["fulfillment_status"] = "FULFILLED"
+        state["fulfilled_at"] = _now()
+    except Exception as exc:
+        state["fulfillment_status"] = "FULFILLMENT_ERROR"
+        state["fulfillment_http_status"] = getattr(exc, "status", None)
+        state["fulfillment_error_at"] = _now()
+        state["fulfillment_error_detail"] = _sanitize_error(exc)
+    _save_state(run_dir, state)
+    _log_fulfillment(run_dir.name, state)
+    return state
+
+
 def deliver_blueprint(run_dir: Path, intake: dict) -> dict:
     run_dir = Path(run_dir)
     with _run_lock(run_dir.name):
         state = _load_state(run_dir)
         if state.get("status") == "DELIVERED":
-            return state
+            return _attempt_shopify_fulfillment(run_dir, state, intake)
 
         email = str((intake.get("_shopify") or {}).get("email") or "").strip()
         state["attempt_count"] = int(state.get("attempt_count") or 0) + 1
@@ -265,6 +539,7 @@ def deliver_blueprint(run_dir: Path, intake: dict) -> dict:
             state["delivered_at"] = _now()
             _save_state(run_dir, state)
             _log_delivery(run_dir.name, state)
+            state = _attempt_shopify_fulfillment(run_dir, state, intake)
         except Exception as exc:
             state["status"] = "DELIVERY_ERROR"
             state["provider_http_status"] = getattr(exc, "status", None)
