@@ -95,7 +95,20 @@ class VisualQATests(unittest.TestCase):
             "chart_summary": {
                 "sun": {"sign": "Aries", "house": 6},
                 "moon": {"sign": "Leo", "house": 9},
-                "rising": {"sign": "Scorpio"},
+                "rising": {"sign": "Scorpio", "absolute_longitude": 210.0},
+            },
+            "chart_details": {
+                "placements": {
+                    "sun": {"name": "Sun", "sign": "Aries", "degree": 14.2, "absolute_longitude": 14.2, "house": 6},
+                    "moon": {"name": "Moon", "sign": "Leo", "degree": 8.0, "absolute_longitude": 128.0, "house": 9},
+                    "mercury": {"name": "Mercury", "sign": "Pisces", "degree": 29.4, "absolute_longitude": 359.4, "house": 5},
+                },
+                "angles": {"ascendant": {"sign": "Scorpio", "absolute_longitude": 210.0}},
+                "houses": [
+                    {"house": number, "cusp_absolute_longitude": (210.0 + (number - 1) * 30) % 360}
+                    for number in range(1, 13)
+                ],
+                "availability": {"rising": True, "houses": True},
             },
             "sections": [{
                 "title": "Birth Chart Snapshot",
@@ -112,6 +125,33 @@ class VisualQATests(unittest.TestCase):
         self.assertIn("Aries · House 6", extracted)
         self.assertIn("Leo · House 9", extracted)
         self.assertIn("Scorpio", extracted)
+        self.assertIn("Your Compact Chart Wheel & Placements", extracted)
+        self.assertIn("Mercury", extracted)
+
+    def test_customer_fill_in_lines_survive_and_duplicate_prompt_is_removed(self):
+        payload = {
+            "customer": {"name": "Elizabeth Hunter"},
+            "sections": [
+                {
+                    "title": "Personalized Action Plan",
+                    "status": "INCLUDED",
+                    "content": 'Write: “My focus is __________; the friction I will address is __________; my first action is __________.”',
+                },
+                {
+                    "title": "Your First / Next Brick",
+                    "status": "INCLUDED",
+                    "content": 'Use this exact format:\n“Today, I will __________ for ______ minutes.”\n“Today, I will __________ for ______ minutes.”',
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "fill-lines.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            extracted = "\n".join(page.extract_text() or "" for page in PdfReader(out).pages)
+        self.assertIn("My focus is __________", extracted)
+        self.assertEqual(extracted.count("Today, I will __________ for ______ minutes."), 1)
+        self.assertEqual(diagnostics["broken_fill_in_prompts"], [])
+        self.assertFalse(diagnostics["duplicate_action_prompts"])
 
     def test_major_chapters_share_a_page_when_space_is_available(self):
         payload = {
@@ -240,6 +280,7 @@ class VisualQATests(unittest.TestCase):
             out = Path(td) / "balanced-ending.pdf"
             _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
         self.assertEqual(diagnostics["sparse_pages"], [])
+        self.assertEqual(diagnostics["unbalanced_summary_pages"], [])
 
     def test_keep_with_next_survives_page_balancing(self):
         payload={"sections":[{"title":"Relationship","status":"INCLUDED","content":

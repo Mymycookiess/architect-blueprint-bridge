@@ -92,6 +92,10 @@ def run_qa(chart, selector, context, report, config, rendered_pages=None, render
             ("raw_orb_values", "Raw aspect orb values in customer prose"),
             ("markdown_bold_markers", "Unconverted Markdown bold markers"),
             ("markdown_emphasis_markers", "Unconverted Markdown emphasis markers"),
+            ("broken_fill_in_prompts", "Broken customer fill-in prompts"),
+            ("duplicate_action_prompts", "Duplicate customer action prompts"),
+            ("unbalanced_summary_pages", "Unbalanced Blueprint Summary pages"),
+            ("chart_snapshot_missing", "Missing compact chart wheel and placement snapshot"),
         ):
             if render_diagnostics.get(key):
                 issues.append(f"{label}: {render_diagnostics[key]}")

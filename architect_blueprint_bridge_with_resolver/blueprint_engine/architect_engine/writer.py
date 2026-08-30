@@ -306,6 +306,12 @@ def compose_report(context: dict, report_id: str) -> dict:
             "moon": context.get("chart_facts", {}).get("placements", {}).get("moon", {}),
             "rising": context.get("chart_facts", {}).get("angles", {}).get("ascendant", {}),
         },
+        "chart_details": {
+            "placements": context.get("chart_facts", {}).get("placements", {}),
+            "angles": context.get("chart_facts", {}).get("angles", {}),
+            "houses": context.get("chart_facts", {}).get("houses", []),
+            "availability": context.get("chart_facts", {}).get("availability", {}),
+        },
         "sections":sections,
         "qa":{"source_boundary":"LOCKED_TO_CONTEXT","new_astrology_added":False}
     }

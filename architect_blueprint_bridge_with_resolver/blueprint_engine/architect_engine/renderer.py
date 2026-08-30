@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import html
+import math
 import os
 import re
 from datetime import datetime
@@ -15,6 +16,7 @@ from reportlab.platypus import (
     BaseDocTemplate,
     CondPageBreak,
     Frame,
+    Flowable,
     HRFlowable,
     KeepTogether,
     PageBreak,
@@ -146,7 +148,31 @@ def _safe_markup(text: str) -> str:
     # Normalize only em/en dashes so legitimate compounds remain untouched.
     text = re.sub(r"\s*[—–]\s*", " - ", _customer_text(text))
     text = re.sub(r"\s+", " ", text).strip()
+    text = re.sub(
+        r"\bMy focus is\s*_?\s*;\s*the friction I will address is\s*_?\s*;\s*my first action is\s*_?\s*\.",
+        "My focus is __________; the friction I will address is __________; my first action is __________.",
+        text,
+        flags=re.I,
+    )
+    text = re.sub(
+        r"\bToday, I will\s*_?\s*for\s*_?\s*minutes\.",
+        "Today, I will __________ for ______ minutes.",
+        text,
+        flags=re.I,
+    )
     text = html.escape(text, quote=False)
+    # Writing prompts intentionally use underscore runs as customer fill-in
+    # lines. Preserve those before interpreting Markdown emphasis; otherwise
+    # the renderer consumes the lines and leaves broken phrases such as
+    # "My focus is ;" or "I will for minutes."
+    fill_lines = []
+
+    def preserve_fill_line(match):
+        width = max(6, min(18, len(match.group(0))))
+        fill_lines.append("<u>" + "_" * width + "</u>")
+        return f"@@FILLLINE{len(fill_lines) - 1}TOKEN@@"
+
+    text = re.sub(r"_{2,}", preserve_fill_line, text)
     text = re.sub(r"\*\*([^*\n]+?)\*\*", r"<b>\1</b>", text)
     text = re.sub(r"__([^_\n]+?)__", r"<b>\1</b>", text)
     text = re.sub(r"(?<!\*)\*([^*\n]+?)\*(?!\*)", r"<i>\1</i>", text)
@@ -154,6 +180,8 @@ def _safe_markup(text: str) -> str:
     # Remove unmatched emphasis delimiters after valid pairs have become real
     # PDF bold formatting. A bare delimiter has no customer-facing meaning.
     text = text.replace("**", "").replace("__", "").replace("*", "")
+    for index, markup in enumerate(fill_lines):
+        text = text.replace(f"@@FILLLINE{index}TOKEN@@", markup)
     return text
 
 
@@ -193,6 +221,9 @@ def _styles():
         "birth_value": ParagraphStyle("birth_value", fontName="BlueprintSans", fontSize=10.2, leading=13, textColor=INK),
         "big_three_label": ParagraphStyle("big_three_label", fontName="BlueprintSans-Bold", fontSize=8.8, leading=11, textColor=GOLD, alignment=TA_CENTER, spaceAfter=3),
         "big_three_value": ParagraphStyle("big_three_value", fontName="BlueprintSans-Bold", fontSize=12.2, leading=15, textColor=INK, alignment=TA_CENTER),
+        "chart_caption": ParagraphStyle("chart_caption", fontName="BlueprintSans-Bold", fontSize=9.2, leading=12, textColor=INK, alignment=TA_CENTER, spaceAfter=5),
+        "placement_head": ParagraphStyle("placement_head", fontName="BlueprintSans-Bold", fontSize=8.2, leading=10, textColor=GOLD),
+        "placement_cell": ParagraphStyle("placement_cell", fontName="BlueprintSans", fontSize=8.2, leading=10.2, textColor=INK),
     }
 
 
@@ -293,11 +324,210 @@ def _birth_rows(payload: dict, styles: dict):
     return [[Paragraph(k, styles["birth_label"]), Paragraph(_safe_markup(v), styles["birth_value"])] for k, v in pairs]
 
 
+_SIGN_SHORT = ("Ar", "Ta", "Ge", "Ca", "Le", "Vi", "Li", "Sc", "Sg", "Cp", "Aq", "Pi")
+_PLANET_SHORT = {
+    "sun": "Su", "moon": "Mo", "mercury": "Me", "venus": "Ve",
+    "mars": "Ma", "jupiter": "Ju", "saturn": "Sa",
+}
+
+
+def _number(value):
+    return float(value) if isinstance(value, (int, float)) and not isinstance(value, bool) else None
+
+
+def _placement_longitude(placement: dict):
+    absolute = _number(
+        placement.get("absolute_longitude", placement.get("full_degree"))
+    )
+    if absolute is not None:
+        return absolute % 360
+    sign = str(placement.get("sign") or "")
+    degree = _number(placement.get("degree"))
+    signs = ("Aries", "Taurus", "Gemini", "Cancer", "Leo", "Virgo", "Libra", "Scorpio", "Sagittarius", "Capricorn", "Aquarius", "Pisces")
+    if sign in signs and degree is not None:
+        return (signs.index(sign) * 30 + degree) % 360
+    return None
+
+
+class CompactChartWheel(Flowable):
+    """A restrained, data-driven natal wheel for FULL customer Blueprints."""
+
+    def __init__(self, chart_details: dict, width=2.75 * inch, height=2.75 * inch):
+        super().__init__()
+        self.chart_details = chart_details
+        self.width = width
+        self.height = height
+
+    def draw(self):
+        canv = self.canv
+        cx, cy = self.width / 2, self.height / 2
+        radius = min(self.width, self.height) / 2 - 10
+        angles = self.chart_details.get("angles") or {}
+        asc = _number((angles.get("ascendant") or {}).get("absolute_longitude"))
+        asc = 0.0 if asc is None else asc % 360
+
+        def point(longitude, distance):
+            theta = math.radians(180 - ((longitude - asc) % 360))
+            return cx + distance * math.cos(theta), cy + distance * math.sin(theta)
+
+        canv.saveState()
+        canv.setStrokeColor(RULE)
+        canv.setLineWidth(0.55)
+        canv.circle(cx, cy, radius, stroke=1, fill=0)
+        canv.circle(cx, cy, radius * 0.78, stroke=1, fill=0)
+        canv.circle(cx, cy, radius * 0.48, stroke=1, fill=0)
+
+        # Zodiac ring, rotated so the Ascendant is the left-hand horizon.
+        canv.setFont("BlueprintSans-Bold", 6.6)
+        canv.setFillColor(MUTED)
+        for index, label in enumerate(_SIGN_SHORT):
+            boundary = index * 30
+            x1, y1 = point(boundary, radius * 0.78)
+            x2, y2 = point(boundary, radius)
+            canv.line(x1, y1, x2, y2)
+            tx, ty = point(boundary + 15, radius * 0.89)
+            canv.drawCentredString(tx, ty - 2.2, label)
+
+        # House cusps and numbers are drawn only from validated FULL data.
+        houses = sorted(
+            [h for h in (self.chart_details.get("houses") or []) if _number(h.get("cusp_absolute_longitude")) is not None],
+            key=lambda item: int(item.get("house") or 0),
+        )
+        canv.setFont("BlueprintSans", 6.4)
+        canv.setFillColor(MUTED)
+        for house in houses:
+            longitude = float(house["cusp_absolute_longitude"]) % 360
+            x1, y1 = point(longitude, radius * 0.48)
+            x2, y2 = point(longitude, radius * 0.78)
+            canv.line(x1, y1, x2, y2)
+        if len(houses) == 12:
+            for index, house in enumerate(houses):
+                start = float(house["cusp_absolute_longitude"]) % 360
+                end = float(houses[(index + 1) % 12]["cusp_absolute_longitude"]) % 360
+                midpoint = (start + ((end - start) % 360) / 2) % 360
+                tx, ty = point(midpoint, radius * 0.58)
+                canv.drawCentredString(tx, ty - 2, str(house["house"]))
+
+        placements = self.chart_details.get("placements") or {}
+        plotted = []
+        for key in _PLANET_SHORT:
+            placement = placements.get(key) or {}
+            longitude = _placement_longitude(placement)
+            if longitude is not None:
+                plotted.append((longitude, key))
+        plotted.sort()
+        cluster_index = 0
+        previous = None
+        for longitude, key in plotted:
+            if previous is None or min((longitude - previous) % 360, (previous - longitude) % 360) >= 10:
+                cluster_index = 0
+            else:
+                cluster_index += 1
+            marker_radius = radius * (0.70 - 0.10 * (cluster_index % 3))
+            tx, ty = point(longitude, marker_radius)
+            canv.setFillColor(BG)
+            canv.setStrokeColor(GOLD)
+            canv.circle(tx, ty, 7.1, stroke=1, fill=1)
+            canv.setFillColor(INK)
+            canv.setFont("BlueprintSans-Bold", 5.7)
+            canv.drawCentredString(tx, ty - 2, _PLANET_SHORT[key])
+            previous = longitude
+
+        # The horizon makes the wheel immediately legible without adding a
+        # dense astrology lesson to the customer experience.
+        left_x, left_y = point(asc, radius)
+        right_x, right_y = point((asc + 180) % 360, radius)
+        canv.setStrokeColor(GOLD)
+        canv.setLineWidth(1.15)
+        canv.line(left_x, left_y, right_x, right_y)
+        canv.setFillColor(GOLD)
+        canv.setFont("BlueprintSans-Bold", 6.4)
+        canv.drawString(max(0, left_x - 1), left_y + 4, "ASC")
+        canv.restoreState()
+
+
+def _placement_snapshot(payload: dict, styles: dict):
+    details = payload.get("chart_details") or {}
+    placements = details.get("placements") or {}
+    rows = [[
+        Paragraph("BODY", styles["placement_head"]),
+        Paragraph("SIGN / DEGREE", styles["placement_head"]),
+        Paragraph("HOUSE", styles["placement_head"]),
+    ]]
+    for key in _PLANET_SHORT:
+        placement = placements.get(key) or {}
+        sign = str(placement.get("sign") or "").strip()
+        if not sign:
+            continue
+        degree = _number(placement.get("degree", placement.get("norm_degree")))
+        degree_text = f"{degree:.0f}°" if degree is not None and abs(degree - round(degree)) < 0.05 else (f"{degree:.1f}°" if degree is not None else "")
+        retrograde = " R" if placement.get("retrograde") else ""
+        house = placement.get("house")
+        rows.append([
+            Paragraph(str(placement.get("name") or key.title()), styles["placement_cell"]),
+            Paragraph(_safe_markup(f"{sign} {degree_text}{retrograde}".strip()), styles["placement_cell"]),
+            Paragraph(str(house) if house else "-", styles["placement_cell"]),
+        ])
+    if len(rows) == 1:
+        return None
+    table = Table(rows, colWidths=[0.90 * inch, 1.38 * inch, 0.45 * inch], repeatRows=1)
+    table.setStyle(TableStyle([
+        ("BOX", (0, 0), (-1, -1), 0.45, RULE),
+        ("INNERGRID", (0, 0), (-1, -1), 0.3, RULE),
+        ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#F1EEE7")),
+        ("VALIGN", (0, 0), (-1, -1), "MIDDLE"),
+        ("LEFTPADDING", (0, 0), (-1, -1), 5),
+        ("RIGHTPADDING", (0, 0), (-1, -1), 5),
+        ("TOPPADDING", (0, 0), (-1, -1), 4.5),
+        ("BOTTOMPADDING", (0, 0), (-1, -1), 4.5),
+    ]))
+    return table
+
+
+def _chart_snapshot(payload: dict, styles: dict):
+    details = payload.get("chart_details") or {}
+    table = _placement_snapshot(payload, styles)
+    if table is None:
+        return []
+    availability = details.get("availability") or {}
+    if payload.get("mode") == "FULL" and availability.get("houses") and availability.get("rising"):
+        wheel = CompactChartWheel(details)
+        panel = Table(
+            [[wheel, table]],
+            colWidths=[3.0 * inch, BODY_WIDTH - 3.0 * inch],
+            hAlign="LEFT",
+        )
+        panel.setStyle(TableStyle([
+            ("VALIGN", (0, 0), (-1, -1), "TOP"),
+            ("LEFTPADDING", (0, 0), (0, 0), 0),
+            ("RIGHTPADDING", (0, 0), (0, 0), 10),
+            ("LEFTPADDING", (1, 0), (1, 0), 0),
+            ("RIGHTPADDING", (1, 0), (1, 0), 0),
+            ("TOPPADDING", (0, 0), (-1, -1), 0),
+            ("BOTTOMPADDING", (0, 0), (-1, -1), 0),
+        ]))
+        return [Paragraph("Your Compact Chart Wheel & Placements", styles["heading"]), panel]
+    return [Paragraph("Your Planetary Placements", styles["heading"]), table]
+
+
 def _content_flowables(content: str, styles: dict, section_title: str = ""):
     flow = []
     blocks = [b.strip() for b in re.split(r"\n\s*\n", content or "") if b.strip()]
+    previous_plain = None
     for block in blocks:
-        lines = [ln.strip() for ln in block.splitlines() if ln.strip()]
+        lines = []
+        for raw_line in block.splitlines():
+            line = raw_line.strip()
+            if not line:
+                continue
+            # The AI can occasionally repeat the same worksheet template line.
+            # Keep one customer prompt, never two identical adjacent copies.
+            plain_line = _customer_text(line)
+            comparison_line = re.sub(r"_+", "", plain_line)
+            if comparison_line == previous_plain and re.search(r"\bToday, I will\b", comparison_line, re.I):
+                continue
+            lines.append(line)
+            previous_plain = comparison_line
         body_buffer = []
 
         def flush_body():
@@ -336,6 +566,48 @@ def _content_flowables(content: str, styles: dict, section_title: str = ""):
                 body_buffer.append(stripped)
         flush_body()
     return flow
+
+
+def _balanced_summary_flow(flow):
+    """Split long summaries near their word midpoint instead of leaving a short spill page."""
+    weighted = []
+    total = 0
+    for index, item in enumerate(flow):
+        if isinstance(item, Paragraph):
+            words = len(re.findall(r"\b\w+\b", item.getPlainText()))
+            if words:
+                weighted.append((index, words))
+                total += words
+    if total <= 475 or len(weighted) < 4:
+        return flow
+    # A summary page comfortably holds about 380 words at Blueprint body size.
+    # Choose the smallest page count that can hold the content, then place each
+    # break at the paragraph boundary nearest its ideal cumulative midpoint.
+    page_count = max(2, math.ceil(total / 380))
+    targets = [total * n / page_count for n in range(1, page_count)]
+    breaks = []
+    running = 0
+    candidate_positions = []
+    for index, words in weighted[:-1]:
+        running += words
+        candidate_positions.append((index, running))
+    previous_index = -1
+    for target in targets:
+        choices = [(index, cumulative) for index, cumulative in candidate_positions if index > previous_index]
+        if not choices:
+            break
+        split_after, _ = min(choices, key=lambda pair: abs(pair[1] - target))
+        breaks.append(split_after)
+        previous_index = split_after
+    if not breaks:
+        return flow
+    output = []
+    break_set = set(breaks)
+    for index, item in enumerate(flow):
+        output.append(item)
+        if index in break_set:
+            output.append(PageBreak())
+    return output
 
 
 class BlueprintDocTemplate(BaseDocTemplate):
@@ -434,7 +706,7 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         # luxury transitions while preventing half-empty ending pages.
         minimum_opening = (
             6.70 * inch
-            if title == "Your Next Chapter / Continue"
+            if title in {"Your Blueprint Summary", "Your Next Chapter / Continue"}
             else 3.30 * inch
             if title in MAJOR_SECTION_STARTS
             else 2.45 * inch
@@ -473,7 +745,12 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
                         big_three,
                         Spacer(1, 0.18 * inch),
                     ])
+                chart_snapshot = _chart_snapshot(payload, styles)
+                if chart_snapshot:
+                    story.extend(chart_snapshot)
         flow = _content_flowables(str(section.get("content") or ""), styles, title)
+        if title == "Your Blueprint Summary":
+            flow = _balanced_summary_flow(flow)
         # Keep headings with the paragraph that follows them whenever possible.
         grouped = []
         i = 0
@@ -482,6 +759,9 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
             if isinstance(current, Paragraph) and current.style.name in {"heading", "action_heading"} and i + 1 < len(flow):
                 grouped.append(KeepTogether([current, flow[i + 1]]))
                 i += 2
+            elif title == "Birth Chart Snapshot" and isinstance(current, Paragraph):
+                grouped.append(KeepTogether([current]))
+                i += 1
             else:
                 grouped.append(current)
                 i += 1
@@ -493,6 +773,18 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
     # not the Markdown-bearing source used to create it.
     rendered_pages = [page.extract_text() or "" for page in PdfReader(out_path).pages]
     rendered_text = "\n".join(rendered_pages)
+    summary_page_counts = []
+    summary_started = False
+    for page in rendered_pages:
+        if "YOUR BLUEPRINT SUMMARY" in page:
+            summary_started = True
+        if summary_started and "CONTINUE BUILDING" not in page:
+            summary_page_counts.append(len(re.findall(r"\b\w+\b", page)))
+        if summary_started and "CONTINUE BUILDING" in page:
+            break
+    unbalanced_summary_pages = []
+    if len(summary_page_counts) > 1 and min(summary_page_counts) < max(summary_page_counts) * 0.55:
+        unbalanced_summary_pages = summary_page_counts
 
     visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
@@ -505,8 +797,23 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", rendered_text, re.I)),
         "raw_orb_values": sorted(set(re.findall(r"\borb\s*[:=]?\s*\d+(?:\.\d+)?\s*°?", rendered_text, re.I))),
-        "markdown_bold_markers": bool(re.search(r"\*\*|__", rendered_text)),
+        # Runs of underscores are intentional worksheet lines, not Markdown
+        # markers. Only flag a double underscore with non-underscore neighbors.
+        "markdown_bold_markers": bool(re.search(r"\*\*|(?<!_)__(?!_)", rendered_text)),
         "markdown_emphasis_markers": bool(re.search(r"(?<!\*)\*[^*\n]+\*(?!\*)|(?<!_)_[^_\n]+_(?!_)", rendered_text)),
+        "broken_fill_in_prompts": sorted(set(
+            match.group(0) for pattern in (
+                r"My focus is\s*;\s*the friction I will address is\s*;\s*my first action is\s*_?\s*\.",
+                r"Today, I will\s+for\s+minutes\.",
+            ) for match in re.finditer(pattern, rendered_text, re.I)
+        )),
+        "duplicate_action_prompts": len(re.findall(r"Today, I will\s+_+\s+for\s+_+\s+minutes\.", rendered_text, re.I)) > 1,
+        "unbalanced_summary_pages": unbalanced_summary_pages,
+        "chart_snapshot_missing": bool(
+            payload.get("mode") == "FULL"
+            and (payload.get("chart_details") or {}).get("availability", {}).get("houses")
+            and "Your Compact Chart Wheel & Placements" not in rendered_text
+        ),
         "joined_dash_words": sorted(word for word in set(re.findall(r"\b[A-Za-z]+-[A-Za-z]+\b", rendered_text))
             if word not in {
                 "self-expression", "well-being", "self-definition", "self-understanding",
