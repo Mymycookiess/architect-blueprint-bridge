@@ -1,6 +1,8 @@
 
 from __future__ import annotations
 import os, json
+from urllib.error import HTTPError
+from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 from base64 import b64encode
 from collections import defaultdict
@@ -8,27 +10,72 @@ from collections import defaultdict
 ALLOWED_ASPECTS={"Conjunction","Sextile","Square","Trine","Opposition"}
 ALLOWED_BODIES={"Sun","Moon","Mercury","Venus","Mars","Jupiter","Saturn"}
 
-def _post_json(url, payload, user_id, api_key):
-    body = json.dumps(payload).encode("utf-8")
-    req = Request(
-        url,
-        data=body,
-        headers={
+def _request(url, payload, user_id, api_key, *, use_basic_auth):
+    if use_basic_auth:
+        credentials = b64encode(f"{user_id}:{api_key}".encode("utf-8")).decode("ascii")
+        body = urlencode(payload).encode("utf-8")
+        headers = {
+            "Authorization": f"Basic {credentials}",
+            "Content-Type": "application/x-www-form-urlencoded",
+        }
+    else:
+        body = json.dumps(payload).encode("utf-8")
+        headers = {
             "Content-Type": "application/json",
             "x-astrologyapi-key": api_key,
-        },
-        method="POST",
-    )
+        }
+
+    req = Request(url, data=body, headers=headers, method="POST")
     with urlopen(req, timeout=40) as resp:
         return json.loads(resp.read().decode("utf-8"))
 
 
+def _post_json(url, payload, user_id, api_key):
+    """Use the auth/body contract that matches the configured credentials."""
+    use_basic_auth = bool(user_id)
+    try:
+        return _request(
+            url,
+            payload,
+            user_id,
+            api_key,
+            use_basic_auth=use_basic_auth,
+        )
+    except HTTPError as exc:
+        # A stale User ID may remain configured beside a wallet access token.
+        # Retry once with token auth before surfacing the provider failure.
+        if use_basic_auth and exc.code in {401, 403, 405}:
+            try:
+                return _request(
+                    url,
+                    payload,
+                    user_id,
+                    api_key,
+                    use_basic_auth=False,
+                )
+            except HTTPError as retry_exc:
+                exc = retry_exc
+
+        try:
+            detail = exc.read().decode("utf-8", errors="replace").strip()
+        except Exception:
+            detail = ""
+        message = f"AstrologyAPI POST failed with HTTP {exc.code}"
+        if detail:
+            message += f": {detail[:500]}"
+        raise RuntimeError(message) from exc
+
+
 def _creds(config):
     base = os.environ.get(config["provider"]["base_url_env"], "").rstrip("/")
+    if base.endswith("/v1"):
+        base = base[:-3]
+    user_id_env = config["provider"].get("user_id_env", "")
+    user_id = os.environ.get(user_id_env, "").strip() if user_id_env else ""
     key = os.environ.get(config["provider"]["api_key_env"], "")
     if not (base and key):
         raise RuntimeError("Live provider credentials not configured.")
-    return base, "", key
+    return base, user_id, key
 
 def _base_payload(intake, hour, minute=0):
     year,month,day=map(int,intake["birth_date"].split("-"))
