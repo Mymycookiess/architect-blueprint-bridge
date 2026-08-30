@@ -37,6 +37,7 @@ from architect_engine.repetition_rules import report_repetition_rule_issues, sec
 from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
 from bridge_app.delivery import attempt_delivery_if_manifest_pass
+from bridge_app.intake_normalization import normalize_birth_date
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
 BLUEPRINT_OUTPUT_ROOT = Path(os.getenv("BLUEPRINT_OUTPUT_ROOT", str(PACKAGE_ROOT / "production_runs")))
@@ -275,12 +276,19 @@ def extract_intake(order: dict, item: dict) -> dict:
     props = props_to_dict(item.get("properties"))
     status = props.get("Birth Time Status", "").strip().upper()
     birth_time = props.get("Birth Time", "").strip() or None
+    raw_birth_date = props.get("Birth Date", "").strip()
+    birth_date = None
 
     errors = []
     if not props.get("Blueprint Full Name"):
         errors.append("Missing Blueprint Full Name")
-    if not props.get("Birth Date"):
+    if not raw_birth_date:
         errors.append("Missing Birth Date")
+    else:
+        try:
+            birth_date = normalize_birth_date(raw_birth_date)
+        except ValueError as exc:
+            errors.append(str(exc))
     if status not in {"KNOWN", "UNKNOWN"}:
         errors.append("Birth Time Status must be KNOWN or UNKNOWN")
     if status == "KNOWN" and not birth_time:
@@ -295,7 +303,7 @@ def extract_intake(order: dict, item: dict) -> dict:
 
     return {
         "customer_name": props["Blueprint Full Name"].strip(),
-        "birth_date": props["Birth Date"].strip(),
+        "birth_date": birth_date,
         "birth_time": birth_time if status == "KNOWN" else None,
         "birth_time_status": status,
         "birth_location": props["Birth Location"].strip(),
