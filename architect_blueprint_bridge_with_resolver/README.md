@@ -36,6 +36,19 @@ The R2 bucket remains private. Signed URLs are created only for delivery and
 are not persisted. Delivery state is stored as `delivery.json` in each run
 directory, independently from the Blueprint generation status.
 
+After Resend accepts the delivery email, the bridge can automatically fulfill
+only the delivered Blueprint line item in Shopify. This requires a Shopify
+Admin API token with `read_merchant_managed_fulfillment_orders` and
+`write_merchant_managed_fulfillment_orders` access. Configure:
+
+- `SHOPIFY_SHOP_DOMAIN` (the bare `store-name.myshopify.com` domain)
+- `SHOPIFY_ADMIN_ACCESS_TOKEN`
+- `SHOPIFY_API_VERSION` (optional; defaults to `2026-07`)
+
+The fulfillment is created with `notifyCustomer: false` because the customer
+already receives the branded Blueprint delivery email. Mixed orders are safe:
+the bridge fulfills only the line item whose PDF was delivered.
+
 ## Why this approach
 
 Shopify supports custom line-item properties inside the product form. That ties each customer's birth details to the exact purchased line item.

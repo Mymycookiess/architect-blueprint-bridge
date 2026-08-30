@@ -12,6 +12,7 @@ from fastapi import HTTPException
 
 from bridge_app.app import get_run_pdf, inspect_run
 from bridge_app.delivery import (
+    _fulfill_shopify_line_item,
     _send_resend,
     attempt_delivery_if_manifest_pass,
     deliver_if_manifest_pass,
@@ -26,6 +27,8 @@ DELIVERY_ENV = {
     "BLUEPRINT_DOWNLOAD_TTL_SECONDS": "604800",
     "RESEND_API_KEY": "resend-key",
     "BLUEPRINT_FROM_EMAIL": "The Architect <blueprints@example.com>",
+    "SHOPIFY_SHOP_DOMAIN": "example.myshopify.com",
+    "SHOPIFY_ADMIN_ACCESS_TOKEN": "shopify-token",
 }
 
 
@@ -66,7 +69,13 @@ class CustomerDeliveryTests(unittest.TestCase):
         return run_dir
 
     def _intake(self):
-        return {"_shopify": {"email": "customer@example.com"}}
+        return {
+            "_shopify": {
+                "email": "customer@example.com",
+                "order_id": 1001,
+                "line_item_id": 2002,
+            }
+        }
 
     def test_pass_manifest_uploads_and_delivers_once(self):
         with tempfile.TemporaryDirectory() as root:
@@ -76,7 +85,10 @@ class CustomerDeliveryTests(unittest.TestCase):
                 "bridge_app.delivery._r2_client", return_value=r2
             ), patch(
                 "bridge_app.delivery._send_resend", return_value="email_123"
-            ) as resend:
+            ) as resend, patch(
+                "bridge_app.delivery._fulfill_shopify_line_item",
+                return_value=["gid://shopify/Fulfillment/3003"],
+            ) as fulfill:
                 first = deliver_if_manifest_pass(run_dir, self._intake())
                 second = deliver_if_manifest_pass(run_dir, self._intake())
 
@@ -88,6 +100,8 @@ class CustomerDeliveryTests(unittest.TestCase):
             self.assertNotIn("ACL", r2.upload_calls[0][1]["ExtraArgs"])
             self.assertEqual(r2.presign_calls[0][1]["ExpiresIn"], 604800)
             self.assertEqual(resend.call_count, 1)
+            self.assertEqual(fulfill.call_count, 1)
+            self.assertEqual(first["fulfillment_status"], "FULFILLED")
             self.assertNotIn("customer", first["object_key"])
             persisted = json.loads((run_dir / "delivery.json").read_text())
             self.assertEqual(persisted["status"], "DELIVERED")
@@ -128,7 +142,9 @@ class CustomerDeliveryTests(unittest.TestCase):
             ), patch(
                 "bridge_app.delivery._send_resend",
                 side_effect=[RuntimeError("Resend unavailable customer@example.com"), "email_456"],
-            ) as resend:
+            ) as resend, patch(
+                "bridge_app.delivery._fulfill_shopify_line_item", return_value=[]
+            ):
                 failed = deliver_if_manifest_pass(run_dir, self._intake())
                 delivered = deliver_if_manifest_pass(run_dir, self._intake())
 
@@ -139,6 +155,74 @@ class CustomerDeliveryTests(unittest.TestCase):
             self.assertEqual(delivered["provider_message_id"], "email_456")
             self.assertEqual(len(r2.upload_calls), 1)
             self.assertEqual(resend.call_count, 2)
+
+    def test_fulfillment_failure_retries_without_resending_email(self):
+        with tempfile.TemporaryDirectory() as root:
+            run_dir = self._run_dir(root)
+            r2 = FakeR2Client()
+            with patch.dict(os.environ, DELIVERY_ENV, clear=False), patch(
+                "bridge_app.delivery._r2_client", return_value=r2
+            ), patch(
+                "bridge_app.delivery._send_resend", return_value="email_123"
+            ) as resend, patch(
+                "bridge_app.delivery._fulfill_shopify_line_item",
+                side_effect=[RuntimeError("temporary Shopify error"), ["gid://shopify/Fulfillment/3003"]],
+            ) as fulfill:
+                first = deliver_if_manifest_pass(run_dir, self._intake())
+                second = deliver_if_manifest_pass(run_dir, self._intake())
+
+            self.assertEqual(first["status"], "DELIVERED")
+            self.assertEqual(first["fulfillment_status"], "FULFILLMENT_ERROR")
+            self.assertEqual(second["fulfillment_status"], "FULFILLED")
+            self.assertEqual(resend.call_count, 1)
+            self.assertEqual(fulfill.call_count, 2)
+
+    def test_shopify_fulfillment_targets_only_blueprint_line_item_without_notification(self):
+        responses = [
+            {
+                "order": {
+                    "fulfillmentOrders": {
+                        "nodes": [{
+                            "id": "gid://shopify/FulfillmentOrder/10",
+                            "lineItems": {"nodes": [
+                                {
+                                    "id": "gid://shopify/FulfillmentOrderLineItem/20",
+                                    "remainingQuantity": 1,
+                                    "lineItem": {"id": "gid://shopify/LineItem/2002"},
+                                },
+                                {
+                                    "id": "gid://shopify/FulfillmentOrderLineItem/21",
+                                    "remainingQuantity": 1,
+                                    "lineItem": {"id": "gid://shopify/LineItem/9999"},
+                                },
+                            ]},
+                        }]}
+                }
+            },
+            {
+                "fulfillmentCreate": {
+                    "fulfillment": {"id": "gid://shopify/Fulfillment/30", "status": "SUCCESS"},
+                    "userErrors": [],
+                }
+            },
+        ]
+        calls = []
+
+        def fake_graphql(query, variables):
+            calls.append((query, variables))
+            return responses.pop(0)
+
+        with patch("bridge_app.delivery._shopify_graphql", side_effect=fake_graphql):
+            ids = _fulfill_shopify_line_item(self._intake())
+
+        self.assertEqual(ids, ["gid://shopify/Fulfillment/30"])
+        fulfillment = calls[1][1]["fulfillment"]
+        self.assertFalse(fulfillment["notifyCustomer"])
+        selected = fulfillment["lineItemsByFulfillmentOrder"][0]["fulfillmentOrderLineItems"]
+        self.assertEqual(selected, [{
+            "id": "gid://shopify/FulfillmentOrderLineItem/20",
+            "quantity": 1,
+        }])
 
     def test_internal_run_endpoints_remain_inspect_key_protected(self):
         with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False):
