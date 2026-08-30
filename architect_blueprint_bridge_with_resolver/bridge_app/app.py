@@ -6,13 +6,17 @@ import hashlib
 import hmac
 import json
 import os
+import random
 import re
 import subprocess
 import sys
 import threading
+import time as time_module
 from datetime import datetime, time, timezone
+from email.utils import parsedate_to_datetime
 from pathlib import Path
 from typing import Any
+from urllib.error import HTTPError, URLError
 from urllib.parse import quote
 from urllib.request import Request as URLRequest, urlopen
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
@@ -52,6 +56,9 @@ ARCHITECT_AI_ENDPOINT = os.getenv("ARCHITECT_AI_ENDPOINT", "")
 ARCHITECT_AI_TOKEN = os.getenv("ARCHITECT_AI_TOKEN", "")
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY", "")
 OPENAI_MODEL = os.getenv("OPENAI_MODEL", "gpt-5.6-terra")
+OPENAI_TRANSIENT_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+OPENAI_REQUEST_ATTEMPTS = 5
+OPENAI_MAX_RETRY_DELAY_SECONDS = 60.0
 
 
 class LocationResolveRequest(BaseModel):
@@ -718,22 +725,138 @@ class AIWriterRequest(BaseModel):
 AIWriterRequest.model_rebuild()
 
 
+def _safe_openai_error_detail(raw: bytes) -> dict:
+    """Extract useful upstream diagnostics without echoing request content."""
+    try:
+        payload = json.loads(raw.decode("utf-8"))
+    except (UnicodeDecodeError, json.JSONDecodeError):
+        return {"message": "Upstream response body was not valid JSON."}
+
+    error = payload.get("error") if isinstance(payload, dict) else None
+    if not isinstance(error, dict):
+        return {"message": "Upstream response did not contain an error object."}
+
+    detail = {}
+    for key in ("message", "type", "code", "param"):
+        value = error.get(key)
+        if value is not None:
+            detail[key] = str(value)[:300]
+    return detail or {"message": "Upstream error details were empty."}
+
+
+def _openai_retry_after_seconds(headers) -> float | None:
+    value = headers.get("Retry-After") if headers is not None else None
+    if not value:
+        return None
+    try:
+        delay = float(value)
+    except (TypeError, ValueError):
+        try:
+            retry_at = parsedate_to_datetime(str(value))
+            if retry_at.tzinfo is None:
+                retry_at = retry_at.replace(tzinfo=timezone.utc)
+            delay = (retry_at - datetime.now(timezone.utc)).total_seconds()
+        except (TypeError, ValueError, OverflowError):
+            return None
+    return min(OPENAI_MAX_RETRY_DELAY_SECONDS, max(0.0, delay))
+
+
+def _openai_retry_delay(attempt: int, headers=None) -> float:
+    retry_after = _openai_retry_after_seconds(headers)
+    if retry_after is not None:
+        return retry_after
+    exponential = min(45.0, 3.0 * (2 ** (attempt - 1)))
+    return min(OPENAI_MAX_RETRY_DELAY_SECONDS, exponential + random.uniform(0.0, 1.0))
+
+
+def _log_openai_event(event: str, **fields) -> None:
+    print(
+        event + " " + json.dumps(fields, ensure_ascii=True, separators=(",", ":")),
+        flush=True,
+    )
+
+
 def _call_openai(openai_payload: dict, output_kind: str) -> dict:
     body = json.dumps(openai_payload).encode("utf-8")
-    req = URLRequest(
-        "https://api.openai.com/v1/responses",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-        },
-        method="POST",
-    )
-    try:
-        with urlopen(req, timeout=300) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(status_code=502, detail=f"OpenAI request failed: {exc}")
+    result = None
+    for attempt in range(1, OPENAI_REQUEST_ATTEMPTS + 1):
+        req = URLRequest(
+            "https://api.openai.com/v1/responses",
+            data=body,
+            headers={
+                "Content-Type": "application/json",
+                "Authorization": f"Bearer {OPENAI_API_KEY}",
+            },
+            method="POST",
+        )
+        try:
+            with urlopen(req, timeout=300) as resp:
+                raw = resp.read()
+            result = json.loads(raw.decode("utf-8"))
+            break
+        except HTTPError as exc:
+            raw_error = exc.read()
+            safe_detail = _safe_openai_error_detail(raw_error)
+            if exc.code in OPENAI_TRANSIENT_HTTP_CODES and attempt < OPENAI_REQUEST_ATTEMPTS:
+                delay = _openai_retry_delay(attempt, exc.headers)
+                _log_openai_event(
+                    "OPENAI_TRANSIENT_RETRY",
+                    output_kind=output_kind,
+                    status=exc.code,
+                    attempt=attempt,
+                    delay_seconds=round(delay, 2),
+                    error=safe_detail,
+                )
+                time_module.sleep(delay)
+                continue
+            _log_openai_event(
+                "OPENAI_UPSTREAM_FAILURE",
+                output_kind=output_kind,
+                status=exc.code,
+                attempt=attempt,
+                error=safe_detail,
+            )
+            message = safe_detail.get("message", "Upstream request failed.")
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI HTTP {exc.code}: {message}",
+            ) from exc
+        except (URLError, TimeoutError) as exc:
+            if attempt < OPENAI_REQUEST_ATTEMPTS:
+                delay = _openai_retry_delay(attempt)
+                _log_openai_event(
+                    "OPENAI_TRANSIENT_RETRY",
+                    output_kind=output_kind,
+                    status=type(exc).__name__,
+                    attempt=attempt,
+                    delay_seconds=round(delay, 2),
+                )
+                time_module.sleep(delay)
+                continue
+            _log_openai_event(
+                "OPENAI_UPSTREAM_FAILURE",
+                output_kind=output_kind,
+                status=type(exc).__name__,
+                attempt=attempt,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail=f"OpenAI network failure after {attempt} attempts.",
+            ) from exc
+        except (UnicodeDecodeError, json.JSONDecodeError) as exc:
+            _log_openai_event(
+                "OPENAI_UPSTREAM_FAILURE",
+                output_kind=output_kind,
+                status="INVALID_JSON",
+                attempt=attempt,
+            )
+            raise HTTPException(
+                status_code=502,
+                detail="OpenAI returned an invalid JSON response envelope.",
+            ) from exc
+
+    if result is None:
+        raise HTTPException(status_code=502, detail="OpenAI request did not complete.")
     output_text = result.get("output_text")
     if not output_text:
         for item in result.get("output", []):
@@ -822,7 +945,7 @@ target. Return the entire revised section, not an addendum.
 """
         section_payload = {
             "model": OPENAI_MODEL,
-            "max_output_tokens": 5000,
+            "max_output_tokens": 3000,
             "instructions": f"""
 {payload.contract}
 Write only the Blueprint section named: {section_name}
@@ -1154,55 +1277,7 @@ Return only the requested structured report object.
         "store": False,
     }
 
-    body = json.dumps(openai_payload).encode("utf-8")
-
-    req = URLRequest(
-        "https://api.openai.com/v1/responses",
-        data=body,
-        headers={
-            "Content-Type": "application/json",
-            "Authorization": f"Bearer {OPENAI_API_KEY}",
-        },
-        method="POST",
-    )
-
-    try:
-        with urlopen(req, timeout=300) as resp:
-            result = json.loads(resp.read().decode("utf-8"))
-    except Exception as exc:
-        raise HTTPException(
-            status_code=502,
-            detail=f"OpenAI request failed: {exc}",
-        )
-
-    output_text = result.get("output_text")
-
-    if not output_text:
-        for item in result.get("output", []):
-            if item.get("type") != "message":
-                continue
-
-            for content_item in item.get("content", []):
-                if content_item.get("type") == "output_text":
-                    output_text = content_item.get("text")
-                    break
-
-            if output_text:
-                break
-
-    if not output_text:
-        raise HTTPException(
-            status_code=502,
-            detail="OpenAI returned no report text.",
-        )
-
-    try:
-        report = json.loads(output_text)
-    except json.JSONDecodeError:
-        raise HTTPException(
-            status_code=502,
-            detail="OpenAI returned invalid report JSON.",
-        )
+    report = _call_openai(openai_payload, "report")
 
     for section in report.get("sections", []):
         title = section.get("title", "")

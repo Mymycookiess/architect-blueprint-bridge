@@ -45,7 +45,7 @@ SECTION_WORD_TARGETS = {
     "Your Next Chapter / Continue": 300,
 }
 
-TRANSIENT_WRITER_HTTP_CODES = {408, 409, 425, 429, 500, 502, 503, 504}
+TRANSIENT_WRITER_HTTP_CODES = {408, 409, 425, 429, 500, 503, 504}
 WRITER_REQUEST_ATTEMPTS = 3
 WRITER_RETRY_DELAYS = (2, 5)
 
@@ -206,9 +206,9 @@ def compose_report_with_ai(context: dict, report_id: str, endpoint: str, token_e
             continue
         pending.append(title)
 
-    # Two concurrent requests keep the production run comfortably inside the
-    # bridge timeout while avoiding a burst of API traffic.
-    with ThreadPoolExecutor(max_workers=2) as pool:
+    # Serialize section requests so a single Blueprint cannot create an
+    # upstream traffic burst or make multiple retries compete with each other.
+    with ThreadPoolExecutor(max_workers=1) as pool:
         futures={
             pool.submit(_request_section,context,report_id,endpoint,token,title):title
             for title in pending
