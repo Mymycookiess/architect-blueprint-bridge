@@ -634,7 +634,9 @@ def _balanced_chapter_flow(flow, *, threshold=470, capacity=460):
     running = 0
     for index, words in weighted[:-1]:
         running += words
-        candidate_positions.append((index, running))
+        item = flow[index]
+        if item.style.name not in {"heading", "action_heading"}:
+            candidate_positions.append((index, running))
     breaks = []
     previous_index = -1
     for target in targets:
@@ -775,15 +777,17 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
     story.extend(_journey_story(styles))
 
     included_sections = [s for s in payload.get("sections", []) if s.get("status") != "OMITTED_BY_MODE" and str(s.get("content") or "").strip()]
-    for idx, section in enumerate(included_sections):
+    rendered_chapters = 0
+    for section in included_sections:
         title = str(section.get("title") or "").strip()
         if title.upper() in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER"):
             continue
         # Every customer chapter receives a clean architectural threshold.
         # Starting chapters mid-page made the document read like a continuous
         # export rather than a premium, intentionally designed book.
-        if idx > 0:
+        if rendered_chapters > 0:
             story.append(PageBreak())
+        rendered_chapters += 1
         display_title = DISPLAY_TITLES.get(title, title)
         story.extend([
             Spacer(1, 0.22 * inch),
@@ -823,6 +827,8 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         flow = _content_flowables(str(section.get("content") or ""), styles, title)
         if title == "Your Blueprint Summary":
             flow = _balanced_summary_flow(flow)
+        elif title == "Your First / Next Brick":
+            flow = _balanced_chapter_flow(flow, threshold=330, capacity=330)
         elif title not in {"Birth Chart Snapshot", "Personalized Action Plan", "Your Next Chapter / Continue"}:
             flow = _balanced_chapter_flow(flow)
         # Keep headings with the paragraph that follows them whenever possible.

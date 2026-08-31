@@ -3,11 +3,14 @@ import unittest
 from pathlib import Path
 
 from pypdf import PdfReader
+from reportlab.platypus import PageBreak, Paragraph
 
 from architect_engine.renderer import (
+    _balanced_chapter_flow,
     _customer_text,
     _display_birth_location,
     _sparse_page_diagnostics,
+    _styles,
     render_pdf,
 )
 
@@ -178,6 +181,64 @@ class VisualQATests(unittest.TestCase):
             path = Path(tmp) / "balanced-chapters.pdf"
             pages, _ = render_pdf(payload, str(path), return_diagnostics=True)
         self.assertEqual(pages, 4)
+
+    def test_first_rendered_chapter_does_not_double_break_after_journey(self):
+        payload = {
+            "customer": {"name": "Launch Test"},
+            "sections": [
+                {
+                    "title": "Personalized Cover",
+                    "status": "INCLUDED",
+                    "content": "Internal cover metadata that is not rendered.",
+                },
+                {
+                    "title": "Welcome to Your Blueprint",
+                    "status": "INCLUDED",
+                    "content": "Your Blueprint begins with a clear and grounded foundation. " * 10,
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "no-double-break.pdf"
+            pages, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            rendered = [page.extract_text() or "" for page in PdfReader(out).pages]
+        self.assertEqual(pages, 3)
+        self.assertEqual(diagnostics["blank_pages"], [])
+        self.assertIn("WELCOME TO YOUR BLUEPRINT", rendered[2])
+
+    def test_balancing_never_breaks_immediately_after_a_subheading(self):
+        styles = _styles()
+        flow = [
+            Paragraph("opening " * 100, styles["body"]),
+            Paragraph("Creativity, Joy, and Personal Expression", styles["heading"]),
+            Paragraph("expression " * 100, styles["body"]),
+            Paragraph("closing " * 5, styles["body"]),
+        ]
+        balanced = _balanced_chapter_flow(flow, threshold=1, capacity=150)
+        for item, following in zip(balanced, balanced[1:]):
+            self.assertFalse(
+                isinstance(item, Paragraph)
+                and item.style.name in {"heading", "action_heading"}
+                and isinstance(following, PageBreak)
+            )
+
+    def test_next_brick_balances_before_a_short_final_spill_page(self):
+        payload = {
+            "customer": {"name": "Launch Test"},
+            "sections": [{
+                "title": "Your First / Next Brick",
+                "status": "INCLUDED",
+                "content": "\n\n".join(
+                    "Choose one small repeatable action and protect enough space to complete it. " * 9
+                    for _ in range(5)
+                ),
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "balanced-next-brick.pdf"
+            pages, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+        self.assertEqual(pages, 4)
+        self.assertEqual(diagnostics["sparse_pages"], [])
 
     def test_intentional_short_chapter_openings_do_not_fail_sparse_page_qa(self):
         payload = {
