@@ -236,8 +236,6 @@ def fetch_paid_shopify_order(order_number: str) -> dict:
               title
               quantity
               unfulfilledQuantity
-              product { id }
-              variant { id }
               customAttributes { key value }
             }
           }
@@ -270,8 +268,6 @@ def fetch_paid_shopify_order(order_number: str) -> dict:
                 "title": item.get("title"),
                 "quantity": item.get("quantity"),
                 "unfulfilled_quantity": item.get("unfulfilledQuantity"),
-                "product_id": legacy_id((item.get("product") or {}).get("id")),
-                "variant_id": legacy_id((item.get("variant") or {}).get("id")),
                 "properties": [
                     {"name": attribute.get("key"), "value": attribute.get("value")}
                     for attribute in item.get("customAttributes") or []

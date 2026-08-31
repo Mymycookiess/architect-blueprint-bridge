@@ -334,8 +334,6 @@ class CustomerDeliveryTests(unittest.TestCase):
                                     "title": "The Architect Blueprint",
                                     "quantity": 1,
                                     "unfulfilledQuantity": 1,
-                                    "product": {"id": "gid://shopify/Product/3003"},
-                                    "variant": {"id": "gid://shopify/ProductVariant/4004"},
                                     "customAttributes": [
                                         {"key": "_Architect Product", "value": "true"},
                                         {"key": "Blueprint Full Name", "value": "Sample Customer"},
@@ -358,6 +356,9 @@ class CustomerDeliveryTests(unittest.TestCase):
             order["line_items"][0]["properties"][0],
             {"name": "_Architect Product", "value": "true"},
         )
+        query = graphql.call_args.args[0]
+        self.assertNotIn("product {", query)
+        self.assertNotIn("variant {", query)
         self.assertEqual(graphql.call_args.args[1], {"query": "name:1069"})
 
     def test_recovery_endpoint_requires_paid_unfulfilled_blueprint(self):
