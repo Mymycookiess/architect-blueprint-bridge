@@ -57,6 +57,30 @@ def section_synthesis_rule_issues(title, content, anchor):
     return []
 
 
+def section_aspect_repetition_issues(title, content, anchor):
+    """Reject repeating the same validated aspect in multiple paragraphs."""
+    if title not in SYNTHESIS_HEAVY_SECTIONS:
+        return []
+    issues = []
+    paragraphs = [paragraph for paragraph in (content or "").split("\n\n") if paragraph.strip()]
+    for aspect in anchor.get("aspects", []):
+        body_a = str(aspect.get("body_a") or "")
+        body_b = str(aspect.get("body_b") or "")
+        aspect_type = str(aspect.get("type") or "")
+        if not body_a or not body_b or not aspect_type:
+            continue
+        mentions = [
+            paragraph
+            for paragraph in paragraphs
+            if body_a.casefold() in paragraph.casefold()
+            and body_b.casefold() in paragraph.casefold()
+            and aspect_type.casefold() in paragraph.casefold()
+        ]
+        if len(mentions) > 1:
+            issues.append(f"{title} repeats {body_a} {aspect_type} {body_b}")
+    return issues
+
+
 def section_synthesis_revision_instruction(title, anchor, content=""):
     factors = anchor.get("factors", [])
     if title not in SYNTHESIS_HEAVY_SECTIONS or len(factors) < 2:
@@ -73,6 +97,14 @@ def section_synthesis_revision_instruction(title, anchor, content=""):
         instruction += (
             f" The supplied draft names only {len(referenced)} validated factor(s); "
             "rewrite the complete section so at least two are integrated."
+        )
+    repeated_aspects = section_aspect_repetition_issues(title, content, anchor)
+    if repeated_aspects:
+        instruction += (
+            " The supplied draft repeats the same validated aspect in multiple "
+            "paragraphs. Rewrite the complete section and name each validated "
+            "aspect in no more than one paragraph; later paragraphs must develop "
+            "the human meaning without restating the aspect name."
         )
     return instruction
 

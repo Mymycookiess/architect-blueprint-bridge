@@ -34,7 +34,7 @@ from architect_engine.content_rules import report_content_rule_issues, section_c
 from architect_engine.confidence_rules import disclaimer_revision_instruction, repetitive_disclaimer_phrases, report_confidence_rule_issues, section_confidence_rule_issues, section_confidence_rules
 from architect_engine.emotional_rules import SYNTHESIS_EMOTIONAL_SECTIONS, report_emotional_rule_issues, section_emotional_revision_instruction, section_emotional_rule_issues, section_emotional_rules
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
-from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
+from architect_engine.synthesis import section_aspect_repetition_issues, section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
 from bridge_app.delivery import attempt_delivery_if_manifest_pass
 from bridge_app.alerts import notify_failure
@@ -1073,6 +1073,13 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
             section.get("content", ""),
             section_anchor,
         )
+        synthesis_issues.extend(
+            section_aspect_repetition_issues(
+                section_name,
+                section.get("content", ""),
+                section_anchor,
+            )
+        )
         if synthesis_issues:
             correction_payload = dict(section_payload)
             correction_payload["instructions"] = (
@@ -1124,6 +1131,7 @@ Return one section object. Use only allowed_evidence_refs in evidence_refs.
         content_issues.extend(section_confidence_rule_issues(section_name,section.get("content",""),context.get("mode")))
         content_issues.extend(section_emotional_rule_issues(section_name,section.get("content",""),section.get("status")))
         content_issues.extend(section_synthesis_rule_issues(section_name,section.get("content",""),section_anchor))
+        content_issues.extend(section_aspect_repetition_issues(section_name,section.get("content",""),section_anchor))
         if content_issues:
             raise HTTPException(status_code=422, detail="; ".join(content_issues))
         return section

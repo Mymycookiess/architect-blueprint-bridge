@@ -8,7 +8,7 @@ from bridge_app.app import AIWriterRequest, ai_writer
 from architect_engine.context_builder import build_context
 from architect_engine.emotional_rules import section_emotional_rule_issues
 from architect_engine.selector import select_sources
-from architect_engine.synthesis import section_synthesis_rule_issues
+from architect_engine.synthesis import section_aspect_repetition_issues, section_synthesis_rule_issues
 
 
 TITLES = (
@@ -128,6 +128,44 @@ class InnerWiringEmotionalRetryTests(unittest.TestCase):
                     section_synthesis_rule_issues(title, result["content"], self.anchors[title]),
                     [],
                 )
+
+    def test_repeated_inner_wiring_aspect_gets_targeted_revision(self):
+        title = "Your Inner Wiring"
+        anchor = self.anchors[title]
+        aspect = anchor["aspects"][0]
+        first, second = self._factor_names(title)
+        aspect_name = f'{aspect["body_a"]} {aspect["type"]} {aspect["body_b"]}'
+        repeated = (
+            f"Your {first} and {second} describe connected inner reactions. {aspect_name} helps name that connection. "
+            "You notice what feels safe before deciding what needs to be said.\n\n"
+            f"Under pressure, {aspect_name} returns as the same pattern. You protect time to think before responding, "
+            "especially when an important need could go unheard."
+        )
+        corrected = (
+            f"Your {first} and {second} describe connected inner reactions. {aspect_name} helps name that connection. "
+            "You notice what feels safe before deciding what needs to be said.\n\n"
+            "Under pressure, this connection becomes a practical pause: you protect time to think before responding, "
+            "especially when an important need could go unheard."
+        )
+        calls = []
+
+        def fake_call(payload, output_kind):
+            calls.append((payload, output_kind))
+            return self._section(title, repeated if len(calls) == 1 else corrected)
+
+        with patch("bridge_app.app.ARCHITECT_AI_TOKEN", "token"), patch(
+            "bridge_app.app.OPENAI_API_KEY", "key"
+        ), patch("bridge_app.app._call_openai", side_effect=fake_call):
+            result = ai_writer(
+                self._request(title),
+                authorization=None,
+                x_architect_token="token",
+            )
+
+        self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1][1], "section synthesis revision")
+        self.assertIn("name each validated aspect in no more than one paragraph", calls[1][0]["instructions"])
+        self.assertEqual(section_aspect_repetition_issues(title, result["content"], anchor), [])
 
 
 if __name__ == "__main__":
