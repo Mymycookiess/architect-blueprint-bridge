@@ -4,7 +4,12 @@ from pathlib import Path
 
 from pypdf import PdfReader
 
-from architect_engine.renderer import _customer_text, _display_birth_location, render_pdf
+from architect_engine.renderer import (
+    _customer_text,
+    _display_birth_location,
+    _sparse_page_diagnostics,
+    render_pdf,
+)
 
 
 class VisualQATests(unittest.TestCase):
@@ -173,6 +178,42 @@ class VisualQATests(unittest.TestCase):
             path = Path(tmp) / "balanced-chapters.pdf"
             pages, _ = render_pdf(payload, str(path), return_diagnostics=True)
         self.assertEqual(pages, 4)
+
+    def test_intentional_short_chapter_openings_do_not_fail_sparse_page_qa(self):
+        payload = {
+            "customer": {"name": "Paul Miller"},
+            "sections": [
+                {
+                    "title": "Welcome to Your Blueprint",
+                    "status": "INCLUDED",
+                    "content": "This opening creates a calm threshold before the detailed interpretation begins.",
+                },
+                {
+                    "title": "Your Next Chapter / Continue",
+                    "status": "INCLUDED",
+                    "content": "Return to this Blueprint whenever your priorities shift and choose the next brick.",
+                },
+            ],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            _, diagnostics = render_pdf(
+                payload, str(Path(td) / "intentional-openings.pdf"), return_diagnostics=True
+            )
+        self.assertEqual(diagnostics["sparse_pages"], [])
+        self.assertEqual(diagnostics["intentional_sparse_pages"], [3, 4])
+
+    def test_sparse_continuation_page_remains_a_blocking_qa_issue(self):
+        pages = [
+            "THE ARCHITECT BLUEPRINT Prepared for Paul Miller",
+            "These final few words spilled onto a separate page.",
+            "CONTINUE CONTINUE BUILDING Too short.",
+        ]
+        sparse, intentional = _sparse_page_diagnostics(
+            pages,
+            ["Continue Building"],
+        )
+        self.assertEqual(sparse, [2, 3])
+        self.assertEqual(intentional, [])
 
     def test_customer_pdf_embeds_spacing_safe_fonts(self):
         payload = {

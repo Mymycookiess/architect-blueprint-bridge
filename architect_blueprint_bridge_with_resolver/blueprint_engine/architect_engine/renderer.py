@@ -653,6 +653,41 @@ def _balanced_chapter_flow(flow, *, threshold=470, capacity=460):
     return output
 
 
+def _normalized_page_marker(value):
+    """Normalize extracted PDF text so chapter headings can be matched safely."""
+    return re.sub(r"[^A-Z0-9]+", " ", str(value or "").upper()).strip()
+
+
+def _sparse_page_diagnostics(rendered_pages, chapter_titles):
+    """Separate intentional chapter thresholds from accidental short spill pages.
+
+    Chapters deliberately start on fresh pages. A short chapter-opening page is
+    therefore valid when its title is visible and it contains meaningful copy.
+    Blank pages and sparse continuation pages remain blocking QA failures.
+    """
+    chapter_markers = {
+        _normalized_page_marker(title)
+        for title in chapter_titles
+        if _normalized_page_marker(title)
+    }
+    intentional = []
+    accidental = []
+    for page_number, page in enumerate(rendered_pages, 1):
+        word_count = len(re.findall(r"\b\w+\b", page))
+        if page_number == 1 or word_count >= 40:
+            continue
+        opening_text = _normalized_page_marker("\n".join(page.splitlines()[:14]))
+        is_chapter_opening = (
+            word_count >= 12
+            and any(marker in opening_text for marker in chapter_markers)
+        )
+        if is_chapter_opening:
+            intentional.append(page_number)
+        else:
+            accidental.append(page_number)
+    return accidental, intentional
+
+
 class BlueprintDocTemplate(BaseDocTemplate):
     def __init__(self, filename, **kwargs):
         super().__init__(filename, pagesize=letter, leftMargin=LEFT, rightMargin=RIGHT, topMargin=TOP, bottomMargin=BOTTOM, **kwargs)
@@ -812,6 +847,14 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
     # not the Markdown-bearing source used to create it.
     rendered_pages = [page.extract_text() or "" for page in PdfReader(out_path).pages]
     rendered_text = "\n".join(rendered_pages)
+    chapter_titles = [
+        DISPLAY_TITLES.get(str(section.get("title") or "").strip(), str(section.get("title") or "").strip())
+        for section in included_sections
+        if str(section.get("title") or "").strip().upper() not in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER")
+    ]
+    sparse_pages, intentional_sparse_pages = _sparse_page_diagnostics(
+        rendered_pages, chapter_titles
+    )
     summary_page_counts = []
     summary_started = False
     for page in rendered_pages:
@@ -828,10 +871,8 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
     visible = "\n".join(str(section.get("content") or "") for section in included_sections)
     diagnostics = {
         "blank_pages": [i for i, page in enumerate(rendered_pages, 1) if not page.strip()],
-        "sparse_pages": [
-            i for i, page in enumerate(rendered_pages, 1)
-            if i > 1 and len(re.findall(r"\b\w+\b", page)) < 40
-        ],
+        "sparse_pages": sparse_pages,
+        "intentional_sparse_pages": intentional_sparse_pages,
         "orphaned_headings": [],
         "unresolved_placeholders": sorted({m.group(0) for p in PLACEHOLDER_PATTERNS for m in p.finditer(visible)}),
         "internal_terms": sorted(t for t in INTERNAL_TERMS if re.search(rf"\b{re.escape(t)}\b", rendered_text, re.I)),
