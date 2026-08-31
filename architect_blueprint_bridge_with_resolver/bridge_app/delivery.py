@@ -13,6 +13,8 @@ from urllib.error import HTTPError
 from urllib.parse import urlencode
 from urllib.request import Request, urlopen
 
+from bridge_app.alerts import notify_failure
+
 
 DELIVERY_FILENAME = "delivery.json"
 PDF_RELATIVE_PATH = Path("engine_output") / "05_architect_blueprint.pdf"
@@ -476,6 +478,15 @@ def _attempt_shopify_fulfillment(run_dir: Path, state: dict, intake: dict) -> di
         state["fulfillment_http_status"] = getattr(exc, "status", None)
         state["fulfillment_error_at"] = _now()
         state["fulfillment_error_detail"] = _sanitize_error(exc)
+        shopify = intake.get("_shopify") or {}
+        notify_failure(
+            run_dir,
+            stage="shopify_fulfillment",
+            status=state["fulfillment_status"],
+            detail=state["fulfillment_error_detail"],
+            order_name=str(shopify.get("order_name") or shopify.get("order_id") or "unknown"),
+            http_status=state.get("fulfillment_http_status"),
+        )
     _save_state(run_dir, state)
     _log_fulfillment(run_dir.name, state)
     return state
@@ -545,6 +556,15 @@ def deliver_blueprint(run_dir: Path, intake: dict) -> dict:
             state["provider_http_status"] = getattr(exc, "status", None)
             state["error_at"] = _now()
             state["sanitized_error_detail"] = _sanitize_error(exc, email)
+            shopify = intake.get("_shopify") or {}
+            notify_failure(
+                run_dir,
+                stage="customer_pdf_delivery",
+                status=state["status"],
+                detail=state["sanitized_error_detail"],
+                order_name=str(shopify.get("order_name") or shopify.get("order_id") or "unknown"),
+                http_status=state.get("provider_http_status"),
+            )
             _save_state(run_dir, state)
             _log_delivery(run_dir.name, state)
         return state
@@ -572,4 +592,13 @@ def attempt_delivery_if_manifest_pass(run_dir: Path, intake: dict) -> dict | Non
             "sanitized_error_detail": _sanitize_error(exc),
         }
         _log_delivery(Path(run_dir).name, fallback)
+        shopify = intake.get("_shopify") or {}
+        notify_failure(
+            Path(run_dir),
+            stage="customer_pdf_delivery",
+            status=fallback["status"],
+            detail=fallback["sanitized_error_detail"],
+            order_name=str(shopify.get("order_name") or shopify.get("order_id") or "unknown"),
+            http_status=fallback.get("provider_http_status"),
+        )
         return fallback

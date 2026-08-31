@@ -55,6 +55,21 @@ The fulfillment is created with `notifyCustomer: false` because the customer
 already receives the branded Blueprint delivery email. Mixed orders are safe:
 the bridge fulfills only the line item whose PDF was delivered.
 
+## Failed-order protection
+
+Paid orders that stop at generation, final QA, customer PDF delivery, or
+Shopify fulfillment send a private, deduplicated owner alert. Configure at
+least one alert channel:
+
+- `BLUEPRINT_FAILURE_ALERT_EMAIL` - owner/support email for branded alerts
+- `BLUEPRINT_FAILURE_ALERT_WEBHOOK_URL` - optional HTTPS fallback endpoint
+- `BLUEPRINT_FAILURE_ALERT_WEBHOOK_TOKEN` - optional bearer token for that endpoint
+
+Email alerts reuse `RESEND_API_KEY` and `BLUEPRINT_FROM_EMAIL`. Alerts contain
+only the Shopify order name, failure stage, sanitized detail, and a support ID;
+customer email and birth details are intentionally omitted. Alert failures are
+logged and never overwrite or crash the paid order's saved state.
+
 ## Why this approach
 
 Shopify supports custom line-item properties inside the product form. That ties each customer's birth details to the exact purchased line item.

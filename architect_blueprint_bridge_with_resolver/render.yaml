@@ -22,3 +22,9 @@ services:
         sync: false
       - key: BLUEPRINT_FROM_EMAIL
         sync: false
+      - key: BLUEPRINT_FAILURE_ALERT_EMAIL
+        sync: false
+      - key: BLUEPRINT_FAILURE_ALERT_WEBHOOK_URL
+        sync: false
+      - key: BLUEPRINT_FAILURE_ALERT_WEBHOOK_TOKEN
+        sync: false

@@ -37,6 +37,7 @@ from architect_engine.repetition_rules import report_repetition_rule_issues, sec
 from architect_engine.synthesis import section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
 from bridge_app.delivery import attempt_delivery_if_manifest_pass
+from bridge_app.alerts import notify_failure
 from bridge_app.intake_normalization import normalize_birth_date
 
 SHOPIFY_WEBHOOK_SECRET = os.getenv("SHOPIFY_WEBHOOK_SECRET", "")
@@ -561,6 +562,13 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
                     "FRONTDOOR_ERROR",
                     "BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
                 )
+                notify_failure(
+                    run_dir,
+                    stage="frontdoor_configuration",
+                    status="FRONTDOOR_ERROR",
+                    detail="BLUEPRINT_WRITER is ai-http but ARCHITECT_AI_ENDPOINT is not configured.",
+                    order_name=str(order.get("name") or order.get("id") or "unknown"),
+                )
                 return
 
             cmd.extend(
@@ -585,10 +593,18 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
         (run_dir / "engine_stderr.txt").write_text(completed.stderr or "")
 
         if completed.returncode != 0:
+            error_detail = completed.stderr[-2000:]
             write_status(
                 run_dir,
                 "ENGINE_ERROR",
-                completed.stderr[-2000:],
+                error_detail,
+            )
+            notify_failure(
+                run_dir,
+                stage="blueprint_generation",
+                status="ENGINE_ERROR",
+                detail=error_detail,
+                order_name=str(order.get("name") or order.get("id") or "unknown"),
             )
             return
 
@@ -608,9 +624,23 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
                 "REVIEW_REQUIRED",
                 "Engine completed but final manifest did not PASS.",
             )
+            notify_failure(
+                run_dir,
+                stage="final_quality_manifest",
+                status="REVIEW_REQUIRED",
+                detail="Engine completed but final manifest did not PASS.",
+                order_name=str(order.get("name") or order.get("id") or "unknown"),
+            )
 
     except Exception as exc:
         write_status(run_dir, "FRONTDOOR_ERROR", str(exc))
+        notify_failure(
+            run_dir,
+            stage="paid_order_processing",
+            status="FRONTDOOR_ERROR",
+            detail=str(exc),
+            order_name=str(order.get("name") or order.get("id") or "unknown"),
+        )
     finally:
         keepalive_stop.set()
         keepalive_thread.join(timeout=1)
