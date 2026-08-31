@@ -36,6 +36,11 @@ The R2 bucket remains private. Signed URLs are created only for delivery and
 are not persisted. Delivery state is stored as `delivery.json` in each run
 directory, independently from the Blueprint generation status.
 
+The bridge also archives every generated PDF under a separate private R2
+support key before the final quality decision. Protected support downloads can
+therefore survive replacement of a Render instance even when a run requires
+manual review and is never delivered to the customer.
+
 After Resend accepts the delivery email, the bridge can automatically fulfill
 only the delivered Blueprint line item in Shopify. This requires a Shopify
 Admin API access with `read_merchant_managed_fulfillment_orders` and
@@ -80,6 +85,21 @@ curl -sS -X POST -H "X-Inspect-Key: $INSPECT_KEY" \
 
 The route is protected by the existing `INSPECT_KEY`, contains no customer
 data, and is deduplicated so repeated requests do not send repeated alerts.
+
+## Protected paid-order recovery
+
+If a Render instance is replaced before a paid, unfulfilled Blueprint order can
+be recovered, an operator can regenerate the order without creating or
+charging another Shopify order:
+
+```sh
+curl -sS -X POST -H "X-Inspect-Key: $INSPECT_KEY" \
+  "http://127.0.0.1:$PORT/internal/recover-shopify-order/1069"
+```
+
+The protected endpoint fetches the exact paid order from Shopify and accepts
+only an unfulfilled Blueprint line item. The normal generation, manifest,
+delivery, and fulfillment gates remain active.
 
 ## Why this approach
 

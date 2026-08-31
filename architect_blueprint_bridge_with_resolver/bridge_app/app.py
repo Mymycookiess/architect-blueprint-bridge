@@ -23,7 +23,7 @@ from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
 from fastapi import BackgroundTasks, FastAPI, Header, HTTPException, Request
 from pydantic import BaseModel 
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, Response
 
 APP_ROOT = Path(__file__).resolve().parent
 PACKAGE_ROOT = APP_ROOT.parent
@@ -36,7 +36,12 @@ from architect_engine.emotional_rules import SYNTHESIS_EMOTIONAL_SECTIONS, repor
 from architect_engine.repetition_rules import report_repetition_rule_issues, section_progression_rules
 from architect_engine.synthesis import section_aspect_repetition_issues, section_synthesis_revision_instruction, section_synthesis_rule_issues
 from architect_engine.writer import SECTION_ORDER
-from bridge_app.delivery import attempt_delivery_if_manifest_pass
+from bridge_app.delivery import (
+    archive_pdf_for_support,
+    attempt_delivery_if_manifest_pass,
+    fetch_paid_shopify_order,
+    load_support_pdf,
+)
 from bridge_app.alerts import notify_failure
 from bridge_app.intake_normalization import normalize_birth_date
 
@@ -611,6 +616,18 @@ def run_blueprint(order: dict, item: dict, webhook_id: str) -> None:
         manifest_path = run_dir / "engine_output" / "00_manifest.json"
         manifest = json.loads(manifest_path.read_text())
 
+        try:
+            archived = archive_pdf_for_support(run_dir)
+            print(
+                f"BLUEPRINT_SUPPORT_ARCHIVE run={run_dir.name} status={'ARCHIVED' if archived else 'MISSING'}",
+                flush=True,
+            )
+        except Exception as exc:
+            print(
+                f"BLUEPRINT_SUPPORT_ARCHIVE run={run_dir.name} status=ERROR detail={type(exc).__name__}",
+                flush=True,
+            )
+
         if manifest.get("status") == "PASS":
             write_status(run_dir, "BLUEPRINT_READY")
             (run_dir / "frontdoor_completed.flag").write_text("PASS\n")
@@ -686,6 +703,52 @@ def verify_inspect_key(x_inspect_key: str | None) -> None:
     expected = os.getenv("INSPECT_KEY", "")
     if not expected or not hmac.compare_digest(x_inspect_key or "", expected):
         raise HTTPException(status_code=403, detail="Forbidden")
+
+
+@app.post("/internal/recover-shopify-order/{order_number}")
+def recover_shopify_order(
+    order_number: str,
+    background_tasks: BackgroundTasks,
+    x_inspect_key: str | None = Header(default=None),
+):
+    """Safely regenerate one paid, still-unfulfilled Blueprint order."""
+    verify_inspect_key(x_inspect_key)
+    try:
+        order = fetch_paid_shopify_order(order_number)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    except LookupError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except PermissionError as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    items = [item for item in order.get("line_items", []) if is_blueprint_line_item(item)]
+    items = [item for item in items if int(item.get("unfulfilled_quantity") or 0) > 0]
+    if not items:
+        raise HTTPException(
+            status_code=409,
+            detail="No paid, unfulfilled Blueprint line item is available for recovery.",
+        )
+
+    run_ids = []
+    for item in items:
+        order_key = safe_slug(str(order.get("name") or order.get("id") or order_number))
+        line_key = safe_slug(str(item.get("id") or item.get("variant_id") or "item"))
+        run_ids.append(f"{order_key}_{line_key}")
+        background_tasks.add_task(
+            run_blueprint,
+            order,
+            item,
+            f"manual-recovery-{order_number}",
+        )
+
+    return {
+        "accepted": True,
+        "order": str(order.get("name") or order_number),
+        "blueprint_items": len(items),
+        "run_ids": run_ids,
+        "message": "Paid Blueprint recovery accepted; normal QA and delivery gates remain active.",
+    }
 
 
 @app.post("/internal/test-failure-alert")
@@ -777,7 +840,19 @@ def get_run_pdf(
     )
 
     if not pdf_path.exists():
-        raise HTTPException(status_code=404, detail="PDF not found")
+        try:
+            archived_pdf = load_support_pdf(run_id)
+        except Exception as exc:
+            raise HTTPException(status_code=503, detail="Archived PDF storage is unavailable") from exc
+        if archived_pdf is None:
+            raise HTTPException(status_code=404, detail="PDF not found")
+        return Response(
+            content=archived_pdf,
+            media_type="application/pdf",
+            headers={
+                "Content-Disposition": 'attachment; filename="architect_blueprint.pdf"'
+            },
+        )
 
     return FileResponse(
         pdf_path,

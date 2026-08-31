@@ -19,6 +19,7 @@ from bridge_app.alerts import notify_failure
 DELIVERY_FILENAME = "delivery.json"
 PDF_RELATIVE_PATH = Path("engine_output") / "05_architect_blueprint.pdf"
 MANIFEST_RELATIVE_PATH = Path("engine_output") / "00_manifest.json"
+SUPPORT_PDF_PREFIX = "support-runs"
 _locks: dict[str, threading.Lock] = {}
 _locks_guard = threading.Lock()
 _shopify_token_lock = threading.Lock()
@@ -55,6 +56,11 @@ def _run_lock(run_id: str) -> threading.Lock:
 def _object_key(run_id: str) -> str:
     digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
     return f"blueprints/{digest}.pdf"
+
+
+def _support_object_key(run_id: str) -> str:
+    digest = hashlib.sha256(run_id.encode("utf-8")).hexdigest()[:32]
+    return f"{SUPPORT_PDF_PREFIX}/{digest}.pdf"
 
 
 def _delivery_id(run_id: str) -> str:
@@ -173,6 +179,113 @@ def _r2_client():
         aws_access_key_id=_required_env("R2_ACCESS_KEY_ID"),
         aws_secret_access_key=_required_env("R2_SECRET_ACCESS_KEY"),
     )
+
+
+def archive_pdf_for_support(run_dir: Path) -> bool:
+    """Persist a private support copy without delivering it to the customer."""
+    run_dir = Path(run_dir)
+    pdf_path = run_dir / PDF_RELATIVE_PATH
+    if not pdf_path.is_file():
+        return False
+    bucket = _required_env("R2_BUCKET_NAME")
+    _r2_client().upload_file(
+        str(pdf_path),
+        bucket,
+        _support_object_key(run_dir.name),
+        ExtraArgs={
+            "ContentType": "application/pdf",
+            "ContentDisposition": 'attachment; filename="Architect-Blueprint-Review.pdf"',
+        },
+    )
+    return True
+
+
+def load_support_pdf(run_id: str) -> bytes | None:
+    """Return a private archived PDF, or None when no archive exists."""
+    try:
+        response = _r2_client().get_object(
+            Bucket=_required_env("R2_BUCKET_NAME"),
+            Key=_support_object_key(run_id),
+        )
+        return response["Body"].read()
+    except Exception as exc:
+        error = getattr(exc, "response", {}) or {}
+        code = str((error.get("Error") or {}).get("Code") or "")
+        if code in {"404", "NoSuchKey", "NotFound"}:
+            return None
+        raise
+
+
+def fetch_paid_shopify_order(order_number: str) -> dict:
+    """Fetch one exact paid Shopify order and convert it to webhook shape."""
+    normalized = str(order_number or "").strip().lstrip("#")
+    if not normalized.isdigit():
+        raise ValueError("Shopify order number must contain digits only")
+
+    query = """
+    query RecoverBlueprintOrder($query: String!) {
+      orders(first: 10, query: $query) {
+        nodes {
+          id
+          name
+          email
+          displayFinancialStatus
+          lineItems(first: 250) {
+            nodes {
+              id
+              title
+              quantity
+              unfulfilledQuantity
+              product { id }
+              variant { id }
+              customAttributes { key value }
+            }
+          }
+        }
+      }
+    }
+    """
+    data = _shopify_graphql(query, {"query": f"name:{normalized}"})
+    matches = [
+        order
+        for order in (data.get("orders") or {}).get("nodes") or []
+        if str(order.get("name") or "").lstrip("#") == normalized
+    ]
+    if len(matches) != 1:
+        raise LookupError("Shopify order was not found uniquely")
+
+    source = matches[0]
+    if str(source.get("displayFinancialStatus") or "").upper() != "PAID":
+        raise PermissionError("Shopify order is not currently paid")
+
+    def legacy_id(gid: object) -> str | None:
+        value = str(gid or "").strip()
+        return value.rsplit("/", 1)[-1] if value else None
+
+    items = []
+    for item in (source.get("lineItems") or {}).get("nodes") or []:
+        items.append(
+            {
+                "id": legacy_id(item.get("id")),
+                "title": item.get("title"),
+                "quantity": item.get("quantity"),
+                "unfulfilled_quantity": item.get("unfulfilledQuantity"),
+                "product_id": legacy_id((item.get("product") or {}).get("id")),
+                "variant_id": legacy_id((item.get("variant") or {}).get("id")),
+                "properties": [
+                    {"name": attribute.get("key"), "value": attribute.get("value")}
+                    for attribute in item.get("customAttributes") or []
+                ],
+            }
+        )
+
+    return {
+        "id": legacy_id(source.get("id")),
+        "name": source.get("name"),
+        "email": source.get("email"),
+        "financial_status": "paid",
+        "line_items": items,
+    }
 
 
 def _send_resend(email: str, download_url: str, idempotency_key: str) -> str | None:

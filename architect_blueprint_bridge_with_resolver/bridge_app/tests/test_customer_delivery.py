@@ -8,17 +8,21 @@ from pathlib import Path
 from unittest.mock import patch
 from urllib.error import HTTPError
 
-from fastapi import HTTPException
+from fastapi import BackgroundTasks, HTTPException
 
-from bridge_app.app import get_run_pdf, inspect_run
+from bridge_app.app import get_run_pdf, inspect_run, recover_shopify_order
 from bridge_app.delivery import (
+    _support_object_key,
     _fulfill_shopify_line_item,
     _send_resend,
     _shopify_access_token,
     _shopify_graphql,
     _shopify_token_cache,
+    archive_pdf_for_support,
     attempt_delivery_if_manifest_pass,
     deliver_if_manifest_pass,
+    fetch_paid_shopify_order,
+    load_support_pdf,
 )
 
 
@@ -37,8 +41,9 @@ DELIVERY_ENV = {
 
 
 class FakeR2Client:
-    def __init__(self, upload_error=None):
+    def __init__(self, upload_error=None, objects=None):
         self.upload_error = upload_error
+        self.objects = objects or {}
         self.upload_calls = []
         self.presign_calls = []
 
@@ -50,6 +55,13 @@ class FakeR2Client:
     def generate_presigned_url(self, *args, **kwargs):
         self.presign_calls.append((args, kwargs))
         return "https://private-download.example/signed"
+
+    def get_object(self, Bucket, Key):
+        if Key not in self.objects:
+            missing = RuntimeError("missing")
+            missing.response = {"Error": {"Code": "NoSuchKey"}}
+            raise missing
+        return {"Body": io.BytesIO(self.objects[Key])}
 
 
 class FakeHTTPResponse:
@@ -130,6 +142,34 @@ class CustomerDeliveryTests(unittest.TestCase):
             r2.assert_not_called()
             resend.assert_not_called()
             self.assertFalse((run_dir / "delivery.json").exists())
+
+    def test_support_archive_is_private_and_retrievable(self):
+        with tempfile.TemporaryDirectory() as root:
+            run_dir = self._run_dir(root, manifest_status="REVIEW_REQUIRED")
+            key = _support_object_key(run_dir.name)
+            r2 = FakeR2Client(objects={key: b"%PDF-archived"})
+            with patch.dict(os.environ, DELIVERY_ENV, clear=False), patch(
+                "bridge_app.delivery._r2_client", return_value=r2
+            ):
+                self.assertTrue(archive_pdf_for_support(run_dir))
+                archived = load_support_pdf(run_dir.name)
+
+            self.assertEqual(archived, b"%PDF-archived")
+            self.assertEqual(r2.upload_calls[0][0][2], key)
+            self.assertNotIn("ACL", r2.upload_calls[0][1]["ExtraArgs"])
+
+    def test_pdf_endpoint_falls_back_to_private_support_archive(self):
+        with tempfile.TemporaryDirectory() as root, patch.dict(
+            os.environ,
+            {"INSPECT_KEY": "support-secret", "BLUEPRINT_OUTPUT_ROOT": root},
+            clear=False,
+        ), patch("bridge_app.app.BLUEPRINT_OUTPUT_ROOT", Path(root)), patch(
+            "bridge_app.app.load_support_pdf", return_value=b"%PDF-archived"
+        ):
+            response = get_run_pdf("1069_17319153303804", "support-secret")
+
+        self.assertEqual(response.body, b"%PDF-archived")
+        self.assertEqual(response.media_type, "application/pdf")
 
     def test_r2_failure_persists_delivery_error(self):
         with tempfile.TemporaryDirectory() as root:
@@ -278,6 +318,78 @@ class CustomerDeliveryTests(unittest.TestCase):
             "short-lived-token",
         )
 
+    def test_fetch_paid_shopify_order_converts_graphql_to_webhook_shape(self):
+        response = {
+            "orders": {
+                "nodes": [
+                    {
+                        "id": "gid://shopify/Order/1001",
+                        "name": "#1069",
+                        "email": "customer@example.com",
+                        "displayFinancialStatus": "PAID",
+                        "lineItems": {
+                            "nodes": [
+                                {
+                                    "id": "gid://shopify/LineItem/2002",
+                                    "title": "The Architect Blueprint",
+                                    "quantity": 1,
+                                    "unfulfilledQuantity": 1,
+                                    "product": {"id": "gid://shopify/Product/3003"},
+                                    "variant": {"id": "gid://shopify/ProductVariant/4004"},
+                                    "customAttributes": [
+                                        {"key": "_Architect Product", "value": "true"},
+                                        {"key": "Blueprint Full Name", "value": "Sample Customer"},
+                                    ],
+                                }
+                            ]
+                        },
+                    }
+                ]
+            }
+        }
+        with patch("bridge_app.delivery._shopify_graphql", return_value=response) as graphql:
+            order = fetch_paid_shopify_order("#1069")
+
+        self.assertEqual(order["id"], "1001")
+        self.assertEqual(order["name"], "#1069")
+        self.assertEqual(order["line_items"][0]["id"], "2002")
+        self.assertEqual(order["line_items"][0]["unfulfilled_quantity"], 1)
+        self.assertEqual(
+            order["line_items"][0]["properties"][0],
+            {"name": "_Architect Product", "value": "true"},
+        )
+        self.assertEqual(graphql.call_args.args[1], {"query": "name:1069"})
+
+    def test_recovery_endpoint_requires_paid_unfulfilled_blueprint(self):
+        order = {
+            "id": "1001",
+            "name": "#1069",
+            "email": "customer@example.com",
+            "line_items": [
+                {
+                    "id": "17319153303804",
+                    "unfulfilled_quantity": 1,
+                    "properties": [{"name": "_Architect Product", "value": "true"}],
+                }
+            ],
+        }
+        tasks = BackgroundTasks()
+        with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False), patch(
+            "bridge_app.app.fetch_paid_shopify_order", return_value=order
+        ):
+            result = recover_shopify_order("1069", tasks, "support-secret")
+
+        self.assertTrue(result["accepted"])
+        self.assertEqual(result["run_ids"], ["1069_17319153303804"])
+        self.assertEqual(len(tasks.tasks), 1)
+
+        order["line_items"][0]["unfulfilled_quantity"] = 0
+        with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False), patch(
+            "bridge_app.app.fetch_paid_shopify_order", return_value=order
+        ), self.assertRaises(HTTPException) as blocked:
+            recover_shopify_order("1069", BackgroundTasks(), "support-secret")
+        self.assertEqual(blocked.exception.status_code, 409)
+
     def test_legacy_shopify_token_remains_supported_during_migration(self):
         env = {
             "SHOPIFY_SHOP_DOMAIN": "example.myshopify.com",
@@ -296,8 +408,11 @@ class CustomerDeliveryTests(unittest.TestCase):
                 inspect_run("example", x_inspect_key=None)
             with self.assertRaises(HTTPException) as pdf_error:
                 get_run_pdf("example", x_inspect_key=None)
+            with self.assertRaises(HTTPException) as recovery_error:
+                recover_shopify_order("1069", BackgroundTasks(), x_inspect_key=None)
         self.assertEqual(inspect_error.exception.status_code, 403)
         self.assertEqual(pdf_error.exception.status_code, 403)
+        self.assertEqual(recovery_error.exception.status_code, 403)
 
     def test_resend_email_has_branded_copy_link_and_no_attachment(self):
         captured = {}
