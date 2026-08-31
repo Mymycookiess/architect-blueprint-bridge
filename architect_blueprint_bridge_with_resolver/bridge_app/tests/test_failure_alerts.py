@@ -5,6 +5,9 @@ import unittest
 from pathlib import Path
 from unittest.mock import patch
 
+from fastapi import HTTPException
+
+from bridge_app.app import test_failure_alert
 from bridge_app.alerts import notify_failure
 
 
@@ -25,6 +28,39 @@ class FakeResponse:
 
 
 class FailureAlertTests(unittest.TestCase):
+    def test_protected_route_sends_controlled_alert_without_customer_data(self):
+        with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False), patch(
+            "bridge_app.app.notify_failure",
+            return_value={"status": "SENT", "channels": [{"channel": "email", "status": "SENT"}]},
+        ) as alert:
+            result = test_failure_alert(x_inspect_key="support-secret")
+
+        self.assertTrue(result["ok"])
+        self.assertEqual(result["alert_status"], "SENT")
+        call = alert.call_args
+        self.assertEqual(call.kwargs["stage"], "protection_self_test")
+        self.assertEqual(call.kwargs["status"], "TEST_ALERT")
+        self.assertEqual(call.kwargs["order_name"], "CONTROLLED TEST")
+        serialized = json.dumps(call.kwargs).lower()
+        self.assertNotIn("@", serialized)
+        self.assertNotIn("birth_date", serialized)
+        self.assertNotIn("birth_time", serialized)
+
+    def test_protected_route_rejects_missing_key(self):
+        with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False):
+            with self.assertRaises(HTTPException) as error:
+                test_failure_alert(x_inspect_key=None)
+        self.assertEqual(error.exception.status_code, 403)
+
+    def test_protected_route_reports_unconfigured_channel(self):
+        with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False), patch(
+            "bridge_app.app.notify_failure",
+            return_value={"status": "NOT_CONFIGURED", "channels": []},
+        ):
+            with self.assertRaises(HTTPException) as error:
+                test_failure_alert(x_inspect_key="support-secret")
+        self.assertEqual(error.exception.status_code, 503)
+
     def test_email_alert_is_private_and_deduplicated(self):
         env = {
             "BLUEPRINT_FAILURE_ALERT_EMAIL": "owner@example.com",

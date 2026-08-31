@@ -70,6 +70,17 @@ only the Shopify order name, failure stage, sanitized detail, and a support ID;
 customer email and birth details are intentionally omitted. Alert failures are
 logged and never overwrite or crash the paid order's saved state.
 
+After deployment, the alert channel can be verified without creating or
+changing a customer order. From the service's private Render Shell, run:
+
+```sh
+curl -sS -X POST -H "X-Inspect-Key: $INSPECT_KEY" \
+  "http://127.0.0.1:$PORT/internal/test-failure-alert"
+```
+
+The route is protected by the existing `INSPECT_KEY`, contains no customer
+data, and is deduplicated so repeated requests do not send repeated alerts.
+
 ## Why this approach
 
 Shopify supports custom line-item properties inside the product form. That ties each customer's birth details to the exact purchased line item.

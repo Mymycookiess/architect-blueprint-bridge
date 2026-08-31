@@ -688,6 +688,39 @@ def verify_inspect_key(x_inspect_key: str | None) -> None:
         raise HTTPException(status_code=403, detail="Forbidden")
 
 
+@app.post("/internal/test-failure-alert")
+def test_failure_alert(
+    x_inspect_key: str | None = Header(default=None),
+):
+    """Send one controlled owner alert without touching a customer order."""
+    verify_inspect_key(x_inspect_key)
+    result = notify_failure(
+        BLUEPRINT_OUTPUT_ROOT / "_system_failure_alert_test",
+        stage="protection_self_test",
+        status="TEST_ALERT",
+        detail=(
+            "Controlled test only. Failed-delivery protection is active; "
+            "no customer order, PDF, email, or fulfillment was changed."
+        ),
+        order_name="CONTROLLED TEST",
+    )
+    if result.get("status") == "NOT_CONFIGURED":
+        raise HTTPException(
+            status_code=503,
+            detail="No failed-delivery alert channel is configured.",
+        )
+    if result.get("status") == "ERROR":
+        raise HTTPException(
+            status_code=502,
+            detail="The test alert provider returned an error.",
+        )
+    return {
+        "ok": True,
+        "alert_status": result.get("status"),
+        "message": "Controlled failed-delivery alert sent.",
+    }
+
+
 @app.get("/runs/{run_id}/inspect")
 def inspect_run(
     run_id: str,
