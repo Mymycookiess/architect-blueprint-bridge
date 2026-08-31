@@ -26,9 +26,27 @@ class V1ProofreadingTests(unittest.TestCase):
         self.assertNotIn("YOUR INNER WIRING", result)
         self.assertIn("How Different Parts of You Operate", result)
 
+    def test_aspect_grammar_and_markdown_duplicate_heading_are_corrected(self):
+        content = (
+            "**Your First / Next Brick**\n"
+            "The Sun conjunction Mercury can keep a Virgo Sun and Virgo Mercury loop editing, "
+            "researching, or correcting after a workable version exists."
+        )
+        result = _proofread_customer_text(content, "Your First / Next Brick")
+        self.assertNotIn("Your First / Next Brick", result)
+        self.assertIn(
+            "The Sun-Mercury conjunction can keep your Virgo Sun and Mercury in a loop of editing",
+            result,
+        )
+
     def test_proofreading_qa_rejects_customer_facing_copy_defects(self):
         report = {"sections": [{"title": "Example", "content": "Example\nThemes appears ."}]}
         issues = proofreading_issues(report)
         self.assertTrue(any("Copyediting error" in issue for issue in issues))
         self.assertTrue(any("Space before punctuation" in issue for issue in issues))
         self.assertTrue(any("Duplicate opening chapter heading" in issue for issue in issues))
+
+        conjunction_issues = proofreading_issues({
+            "sections": [{"title": "Example", "content": "The Sun conjunction Mercury creates focus."}]
+        })
+        self.assertTrue(any("malformed conjunction phrasing" in issue for issue in conjunction_issues))

@@ -51,6 +51,8 @@ def proofreading_issues(report):
             pattern=re.escape(error).replace(r"\ ", r"\s+")
             if re.search(pattern, content, re.I):
                 issues.append(f"Copyediting error in {title}: {error}")
+        if re.search(r"\bThe\s+[A-Z][A-Za-z]+\s+conjunction\s+[A-Z][A-Za-z]+\b", content):
+            issues.append(f"Copyediting error in {title}: malformed conjunction phrasing")
         if re.search(r"\s+[,.;:!?]", content):
             issues.append(f"Space before punctuation in {title}")
         lines=content.splitlines()

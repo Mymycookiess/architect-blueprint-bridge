@@ -123,12 +123,15 @@ MAJOR_SECTION_STARTS = {
 }
 
 ACTION_PLAN_HEADINGS = {
-    "3 Strengths",
-    "3 Supporting Habits",
-    "3 Patterns to Watch",
-    "1 Challenge",
-    "1 Encouraging Message",
-    "1 Next Brick",
+    "strength": "Strengths",
+    "strengths": "Strengths",
+    "supporting habit": "Supporting Habits",
+    "supporting habits": "Supporting Habits",
+    "pattern to watch": "Patterns to Watch",
+    "patterns to watch": "Patterns to Watch",
+    "challenge": "Challenge",
+    "encouraging message": "Encouraging Message",
+    "next brick": "Next Brick",
 }
 
 
@@ -140,6 +143,17 @@ def _customer_text(text: str) -> str:
     cleaned = re.sub(r"\bBottom quote\s*[:—-]\s*", "", cleaned, flags=re.I)
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
     return cleaned
+
+
+def _heading_key(text: str) -> str:
+    cleaned = _customer_text(text)
+    cleaned = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", cleaned).strip()
+    cleaned = re.sub(r"^(?:[-*•]\s+|\d+[.)]?\s+)", "", cleaned).strip()
+    return cleaned.rstrip(":").strip().casefold()
+
+
+def _action_plan_heading(text: str) -> str:
+    return ACTION_PLAN_HEADINGS.get(_heading_key(text), "")
 
 
 def _safe_markup(text: str) -> str:
@@ -518,6 +532,16 @@ def _chart_snapshot(payload: dict, styles: dict):
 
 def _content_flowables(content: str, styles: dict, section_title: str = ""):
     flow = []
+    source_lines = (content or "").splitlines()
+    while source_lines and not source_lines[0].strip():
+        source_lines.pop(0)
+    duplicate_titles = {section_title, DISPLAY_TITLES.get(section_title, "")}
+    duplicate_title_keys = {_heading_key(title) for title in duplicate_titles if title}
+    while source_lines and _heading_key(source_lines[0]) in duplicate_title_keys:
+        source_lines.pop(0)
+        while source_lines and not source_lines[0].strip():
+            source_lines.pop(0)
+    content = "\n".join(source_lines)
     blocks = [b.strip() for b in re.split(r"\n\s*\n", content or "") if b.strip()]
     previous_plain = None
     for block in blocks:
@@ -558,9 +582,10 @@ def _content_flowables(content: str, styles: dict, section_title: str = ""):
         for line in lines:
             stripped = re.sub(r"^#{1,6}\s+", "", line).strip()
             plain = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", stripped).strip()
-            if section_title == "Personalized Action Plan" and plain in ACTION_PLAN_HEADINGS:
+            action_heading = _action_plan_heading(plain) if section_title == "Personalized Action Plan" else ""
+            if action_heading:
                 flush_body()
-                flow.append(Paragraph(_safe_markup(plain), styles["action_heading"]))
+                flow.append(Paragraph(_safe_markup(action_heading), styles["action_heading"]))
             elif _is_heading(stripped):
                 flush_body()
                 flow.append(Paragraph(_safe_markup(stripped), styles["heading"]))

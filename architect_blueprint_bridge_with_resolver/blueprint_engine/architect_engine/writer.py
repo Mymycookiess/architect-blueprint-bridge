@@ -42,12 +42,28 @@ def _proofread_customer_text(text, section_title=""):
     for source, replacement in replacements.items():
         pattern = re.escape(source).replace(r"\ ", r"\s+")
         text = re.sub(pattern, replacement, text, flags=re.I)
+    text = re.sub(
+        r"\bThe\s+([A-Z][A-Za-z]+)\s+conjunction\s+([A-Z][A-Za-z]+)\b",
+        r"The \1-\2 conjunction",
+        text,
+    )
+    text = re.sub(
+        r"\bcan keep (?:a|an)\s+([A-Z][A-Za-z]+)\s+([A-Z][A-Za-z]+)\s+and\s+\1\s+([A-Z][A-Za-z]+)\s+loop\s+([a-z]+ing)\b",
+        r"can keep your \1 \2 and \3 in a loop of \4",
+        text,
+        flags=re.I,
+    )
     text = re.sub(r"\s+([,.;:!?])", r"\1", text)
 
     # The renderer already supplies the chapter title. Remove only an identical
     # source-library heading at the start, never a distinct subtitle.
+    def normalized_heading(value):
+        value = re.sub(r"^\s*(?:#{1,6}\s+|[-*•]\s+|\d+[.)]\s+)", "", value or "")
+        value = re.sub(r"^(?:\*\*|__)(.*?)(?:\*\*|__)$", r"\1", value.strip())
+        return value.strip(" :—–-").casefold()
+
     lines = text.splitlines()
-    while lines and section_title and lines[0].strip().casefold() == section_title.strip().casefold():
+    while lines and section_title and normalized_heading(lines[0]) == normalized_heading(section_title):
         lines = lines[1:]
 
     # Remove only immediately repeated all-caps headings; preserve repeated prose.

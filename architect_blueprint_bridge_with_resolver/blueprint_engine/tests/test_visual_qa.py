@@ -9,6 +9,7 @@ from architect_engine.renderer import (
     _balanced_chapter_flow,
     _customer_text,
     _display_birth_location,
+    _content_flowables,
     _sparse_page_diagnostics,
     _styles,
     render_pdf,
@@ -16,6 +17,35 @@ from architect_engine.renderer import (
 
 
 class VisualQATests(unittest.TestCase):
+    def test_action_plan_bullet_labels_render_as_subsection_headings(self):
+        flow = _content_flowables(
+            "• Strengths\nGrounded judgment.\n\n- Supporting Habits\nPause before deciding.",
+            _styles(),
+            "Personalized Action Plan",
+        )
+        headings = [
+            item.getPlainText()
+            for item in flow
+            if isinstance(item, Paragraph) and item.style.name == "action_heading"
+        ]
+        self.assertEqual(headings, ["Strengths", "Supporting Habits"])
+
+    def test_renderer_removes_redundant_source_style_chapter_label(self):
+        payload = {
+            "customer": {"name": "Launch Test"},
+            "sections": [{
+                "title": "Your First / Next Brick",
+                "status": "INCLUDED",
+                "content": "**Your First / Next Brick**\nChoose one small repeatable action.",
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "next-brick-label.pdf"
+            render_pdf(payload, str(out))
+            extracted = "\n".join(page.extract_text() or "" for page in PdfReader(out).pages)
+        self.assertNotIn("Your First / Next Brick", extracted)
+        self.assertEqual(extracted.count("YOUR NEXT BRICK"), 1)
+
     def test_customer_front_matter_and_finished_titles_are_rendered(self):
         payload = {
             "mode": "FULL",
