@@ -71,7 +71,7 @@ def section_progression_rules(title):
     if title=="Your Big Three":
         return "Integrate the three layers and explain their interaction; do not repeat the standalone Sun, Moon, or Rising explanation."
     if title in ("Your Inner Wiring","Your Relationship Blueprint","Your Career & Purpose Blueprint","Your Growth Blueprint"):
-        return "Apply earlier chart discoveries to this chapter's specific life area. A callback must add a new context, consequence, tension, choice, or application and remain concise."
+        return "Apply earlier chart discoveries to this chapter's specific life area. A callback must add a new context, consequence, tension, choice, or application and remain concise. Establish each exact sign-and-factor name once, then use natural references such as your Sun, your Moon, or this connection instead of repeating the full label."
     if title=="Personalized Action Plan":
         return "Convert earlier insights into decisions and behaviors. Do not summarize or restate previous chapters; every callback must become a specific action, habit, pattern-to-watch, challenge, or Next Brick."
     if title=="Your Blueprint Summary":

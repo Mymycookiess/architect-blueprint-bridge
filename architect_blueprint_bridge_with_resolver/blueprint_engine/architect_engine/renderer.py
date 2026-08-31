@@ -18,6 +18,7 @@ from reportlab.platypus import (
     Frame,
     Flowable,
     HRFlowable,
+    Image,
     KeepTogether,
     PageBreak,
     PageTemplate,
@@ -79,9 +80,9 @@ PLACEHOLDER_PATTERNS = (
 
 JOURNEY = (
     ("DISCOVER", "Welcome to Your Blueprint", "Birth Chart Snapshot"),
-    ("UNDERSTAND", "Your Core Identity - Sun", "Your Emotional World - Moon", "How the World Meets You - Rising", "Your Big Three", "Your Houses / Life Areas", "Your Inner Wiring"),
+    ("UNDERSTAND", "Your Story Begins Here", "Your Core Identity - Sun", "Your Emotional World - Moon", "How the World Meets You - Rising", "Your Big Three", "Your Houses / Life Areas", "Your Inner Wiring"),
     ("REFLECT", "Your Relationship Blueprint", "Your Career & Purpose Blueprint", "Your Growth Blueprint"),
-    ("BUILD", "Alignment & Action", "Your Personalized Action Plan", "Your Next Brick"),
+    ("BUILD", "Alignment & Action", "Personalized Action Plan", "Your Next Brick"),
     ("CONTINUE", "Your Blueprint Summary", "Continue Building"),
 )
 
@@ -209,11 +210,11 @@ def _styles():
         "chapter_stage": ParagraphStyle("chapter_stage", fontName="BlueprintSans-Bold", fontSize=8.8, leading=11, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=7),
         "chapter_rule": ParagraphStyle("chapter_rule", fontName="BlueprintSans", fontSize=8, leading=8, textColor=GOLD, alignment=TA_CENTER, keepWithNext=True, spaceAfter=18),
         "heading": ParagraphStyle("heading", fontName="BlueprintSans-Bold", fontSize=11.4, leading=15.5, textColor=INK, spaceBefore=9, spaceAfter=5, keepWithNext=True),
-        "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=10.55, leading=15.6, textColor=INK, alignment=TA_LEFT, spaceAfter=8.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
-        "closing_body": ParagraphStyle("closing_body", fontName="BlueprintSans", fontSize=10.55, leading=14.2, textColor=INK, alignment=TA_LEFT, spaceAfter=6.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
-        "list": ParagraphStyle("list", parent=None, fontName="BlueprintSans", fontSize=10.45, leading=15.2, leftIndent=15, firstLineIndent=-9, textColor=INK, spaceAfter=5.5, bulletIndent=5, allowWidows=0, allowOrphans=0),
+        "body": ParagraphStyle("body", fontName="BlueprintSans", fontSize=11.15, leading=17.0, textColor=INK, alignment=TA_LEFT, spaceAfter=10.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "closing_body": ParagraphStyle("closing_body", fontName="BlueprintSans", fontSize=10.6, leading=14.4, textColor=INK, alignment=TA_LEFT, spaceAfter=7, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "list": ParagraphStyle("list", parent=None, fontName="BlueprintSans", fontSize=11.0, leading=16.7, leftIndent=17, firstLineIndent=-10, textColor=INK, spaceAfter=8, bulletIndent=5, allowWidows=0, allowOrphans=0),
         "action_heading": ParagraphStyle("action_heading", fontName="BlueprintSans-Bold", fontSize=11.3, leading=14.5, textColor=GOLD, backColor=colors.HexColor("#F1EEE7"), borderColor=RULE, borderWidth=0.45, borderPadding=(6, 8, 6, 8), spaceBefore=10, spaceAfter=7, keepWithNext=True),
-        "action_item": ParagraphStyle("action_item", fontName="BlueprintSans", fontSize=10.35, leading=15.1, textColor=INK, alignment=TA_LEFT, spaceAfter=10.5, splitLongWords=False, allowWidows=0, allowOrphans=0),
+        "action_item": ParagraphStyle("action_item", fontName="BlueprintSans", fontSize=10.95, leading=16.4, textColor=INK, alignment=TA_LEFT, spaceAfter=12, splitLongWords=False, allowWidows=0, allowOrphans=0),
         "journey_title": ParagraphStyle("journey_title", fontName="BlueprintSans-Bold", fontSize=22, leading=27, textColor=INK, alignment=TA_CENTER, spaceAfter=10),
         "journey_stage": ParagraphStyle("journey_stage", fontName="BlueprintSans-Bold", fontSize=10.2, leading=13, textColor=GOLD, alignment=TA_CENTER, spaceAfter=2),
         "journey_body": ParagraphStyle("journey_body", fontName="BlueprintSans", fontSize=9.4, leading=13.4, textColor=INK, alignment=TA_CENTER),
@@ -485,6 +486,11 @@ def _placement_snapshot(payload: dict, styles: dict):
 
 
 def _chart_snapshot(payload: dict, styles: dict):
+    snapshot_image = str(payload.get("chart_snapshot_image") or "").strip()
+    if snapshot_image and os.path.isfile(snapshot_image):
+        width = BODY_WIDTH
+        height = width * 900 / 2180
+        return [Image(snapshot_image, width=width, height=height)]
     details = payload.get("chart_details") or {}
     table = _placement_snapshot(payload, styles)
     if table is None:
@@ -610,6 +616,43 @@ def _balanced_summary_flow(flow):
     return output
 
 
+def _balanced_chapter_flow(flow, *, threshold=470, capacity=460):
+    """Balance multi-page chapters at paragraph boundaries for premium pacing."""
+    weighted = []
+    total = 0
+    for index, item in enumerate(flow):
+        if isinstance(item, Paragraph):
+            words = len(re.findall(r"\b\w+\b", item.getPlainText()))
+            if words:
+                weighted.append((index, words))
+                total += words
+    if total <= threshold or len(weighted) < 4:
+        return flow
+    page_count = max(2, math.ceil(total / capacity))
+    targets = [total * n / page_count for n in range(1, page_count)]
+    candidate_positions = []
+    running = 0
+    for index, words in weighted[:-1]:
+        running += words
+        candidate_positions.append((index, running))
+    breaks = []
+    previous_index = -1
+    for target in targets:
+        choices = [(index, cumulative) for index, cumulative in candidate_positions if index > previous_index]
+        if not choices:
+            break
+        split_after, _ = min(choices, key=lambda pair: abs(pair[1] - target))
+        breaks.append(split_after)
+        previous_index = split_after
+    output = []
+    break_set = set(breaks)
+    for index, item in enumerate(flow):
+        output.append(item)
+        if index in break_set:
+            output.append(PageBreak())
+    return output
+
+
 class BlueprintDocTemplate(BaseDocTemplate):
     def __init__(self, filename, **kwargs):
         super().__init__(filename, pagesize=letter, leftMargin=LEFT, rightMargin=RIGHT, topMargin=TOP, bottomMargin=BOTTOM, **kwargs)
@@ -701,17 +744,11 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         title = str(section.get("title") or "").strip()
         if title.upper() in ("THE ARCHITECT BLUEPRINT", "PERSONALIZED COVER"):
             continue
-        # Start chapters on the current page when there is room for the complete
-        # title treatment and a meaningful opening passage. This keeps the
-        # luxury transitions while preventing half-empty ending pages.
-        minimum_opening = (
-            6.70 * inch
-            if title in {"Your Blueprint Summary", "Your Next Chapter / Continue"}
-            else 3.30 * inch
-            if title in MAJOR_SECTION_STARTS
-            else 2.45 * inch
-        )
-        story.append(CondPageBreak(minimum_opening))
+        # Every customer chapter receives a clean architectural threshold.
+        # Starting chapters mid-page made the document read like a continuous
+        # export rather than a premium, intentionally designed book.
+        if idx > 0:
+            story.append(PageBreak())
         display_title = DISPLAY_TITLES.get(title, title)
         story.extend([
             Spacer(1, 0.22 * inch),
@@ -751,6 +788,8 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         flow = _content_flowables(str(section.get("content") or ""), styles, title)
         if title == "Your Blueprint Summary":
             flow = _balanced_summary_flow(flow)
+        elif title not in {"Birth Chart Snapshot", "Personalized Action Plan", "Your Next Chapter / Continue"}:
+            flow = _balanced_chapter_flow(flow)
         # Keep headings with the paragraph that follows them whenever possible.
         grouped = []
         i = 0
@@ -812,6 +851,7 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         "chart_snapshot_missing": bool(
             payload.get("mode") == "FULL"
             and (payload.get("chart_details") or {}).get("availability", {}).get("houses")
+            and not str(payload.get("chart_snapshot_image") or "").strip()
             and "Your Compact Chart Wheel & Placements" not in rendered_text
         ),
         "joined_dash_words": sorted(word for word in set(re.findall(r"\b[A-Za-z]+-[A-Za-z]+\b", rendered_text))

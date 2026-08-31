@@ -153,7 +153,7 @@ class VisualQATests(unittest.TestCase):
         self.assertEqual(diagnostics["broken_fill_in_prompts"], [])
         self.assertFalse(diagnostics["duplicate_action_prompts"])
 
-    def test_major_chapters_share_a_page_when_space_is_available(self):
+    def test_major_chapters_receive_separate_opening_pages(self):
         payload = {
             "customer": {"name": "Paul Miller"},
             "sections": [
@@ -172,7 +172,7 @@ class VisualQATests(unittest.TestCase):
         with tempfile.TemporaryDirectory() as tmp:
             path = Path(tmp) / "balanced-chapters.pdf"
             pages, _ = render_pdf(payload, str(path), return_diagnostics=True)
-        self.assertEqual(pages, 3)
+        self.assertEqual(pages, 4)
 
     def test_customer_pdf_embeds_spacing_safe_fonts(self):
         payload = {
@@ -267,7 +267,10 @@ class VisualQATests(unittest.TestCase):
                 {
                     "title": "Your Blueprint Summary",
                     "status": "INCLUDED",
-                    "content": "Your summary carries the central pattern forward. " * 75,
+                    "content": "\n\n".join(
+                        "Your summary carries the central pattern forward. " * 19
+                        for _ in range(4)
+                    ),
                 },
                 {
                     "title": "Your Next Chapter / Continue",
