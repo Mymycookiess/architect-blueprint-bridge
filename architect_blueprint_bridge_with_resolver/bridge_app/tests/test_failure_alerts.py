@@ -7,7 +7,7 @@ from unittest.mock import patch
 
 from fastapi import HTTPException
 
-from bridge_app.app import test_failure_alert
+from bridge_app.app import send_temporary_deployment_alert_test, test_failure_alert
 from bridge_app.alerts import notify_failure
 
 
@@ -28,6 +28,22 @@ class FakeResponse:
 
 
 class FailureAlertTests(unittest.TestCase):
+    def test_temporary_startup_test_is_isolated_from_customer_orders(self):
+        with patch(
+            "bridge_app.app.notify_failure",
+            return_value={"status": "SENT", "channels": [{"channel": "email", "status": "SENT"}]},
+        ) as alert:
+            send_temporary_deployment_alert_test()
+
+        call = alert.call_args
+        self.assertEqual(call.kwargs["stage"], "protection_self_test")
+        self.assertEqual(call.kwargs["status"], "TEST_ALERT")
+        self.assertEqual(call.kwargs["order_name"], "CONTROLLED TEST")
+        serialized = json.dumps(call.kwargs).lower()
+        self.assertNotIn("@", serialized)
+        self.assertNotIn("birth_date", serialized)
+        self.assertNotIn("birth_time", serialized)
+
     def test_protected_route_sends_controlled_alert_without_customer_data(self):
         with patch.dict(os.environ, {"INSPECT_KEY": "support-secret"}, clear=False), patch(
             "bridge_app.app.notify_failure",

@@ -204,6 +204,37 @@ def _historical_utc_offset_hours(tz_name: str, birth_date: str, birth_time: str 
 app = FastAPI(title="Architect Blueprint Shopify Bridge", version="1.1.0")
 
 
+@app.on_event("startup")
+def send_temporary_deployment_alert_test() -> None:
+    """Temporary no-Shell test; remove after the owner confirms receipt."""
+    try:
+        result = notify_failure(
+            BLUEPRINT_OUTPUT_ROOT / "_system_deployment_alert_test_2026_08_31",
+            stage="protection_self_test",
+            status="TEST_ALERT",
+            detail=(
+                "Controlled deployment test only. Failed-delivery protection is active; "
+                "no customer order, PDF, email, or fulfillment was changed."
+            ),
+            order_name="CONTROLLED TEST",
+        )
+        print(
+            "BLUEPRINT_STARTUP_ALERT_TEST "
+            + json.dumps(result, ensure_ascii=True, separators=(",", ":")),
+            flush=True,
+        )
+    except Exception as exc:
+        print(
+            "BLUEPRINT_STARTUP_ALERT_TEST_ERROR "
+            + json.dumps(
+                {"error_type": exc.__class__.__name__},
+                ensure_ascii=True,
+                separators=(",", ":"),
+            ),
+            flush=True,
+        )
+
+
 @app.get("/")
 def root():
     return {"ok": True, "service": "architect-blueprint-shopify-bridge"}
