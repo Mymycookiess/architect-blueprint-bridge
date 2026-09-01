@@ -209,8 +209,8 @@ class VisualQATests(unittest.TestCase):
                 "status": "INCLUDED",
                 "content": (
                     paragraph + " " + paragraph
-                    + "\n\nARCHITECT REFLECTION\n"
-                    + "Which pattern feels immediately familiar? Notice where it appears "
+                    + "\n\nArchitect Reflection Which pattern feels immediately familiar? "
+                    + "Notice where it appears "
                     "in your ordinary choices, then observe how the other chart pieces work together."
                 ),
             }],
@@ -219,7 +219,7 @@ class VisualQATests(unittest.TestCase):
             out = Path(td) / "balanced-birth-chart.pdf"
             _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
             rendered = [page.extract_text() or "" for page in PdfReader(out).pages]
-        reflection_page = next(page for page in rendered if "ARCHITECT REFLECTION" in page)
+        reflection_page = next(page for page in rendered if "Architect Reflection" in page)
         self.assertIn("Your chart brings several distinct patterns", reflection_page)
         self.assertEqual(diagnostics["sparse_pages"], [])
 

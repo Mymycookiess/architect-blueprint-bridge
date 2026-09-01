@@ -864,6 +864,22 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
             if (
                 title == "Birth Chart Snapshot"
                 and isinstance(current, Paragraph)
+                and re.match(r"^architect reflection\b", current.getPlainText().strip(), flags=re.IGNORECASE)
+                and i > 0
+                and isinstance(flow[i - 1], Paragraph)
+                and flow[i - 1].style.name not in {"heading", "action_heading"}
+                and grouped
+            ):
+                # Production copy can render the reflection label inline at
+                # the start of its body paragraph instead of as a standalone
+                # heading. Keep the preceding interpretation paragraph with
+                # that inline reflection so it cannot spill onto a page alone.
+                grouped.pop()
+                grouped.append(KeepTogether([flow[i - 1], current]))
+                i += 1
+            elif (
+                title == "Birth Chart Snapshot"
+                and isinstance(current, Paragraph)
                 and current.style.name == "heading"
                 and _heading_key(current.getPlainText()) == "architect reflection"
                 and i > 0
