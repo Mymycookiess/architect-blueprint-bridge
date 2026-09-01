@@ -166,6 +166,63 @@ class VisualQATests(unittest.TestCase):
         self.assertIn("Your Compact Chart Wheel & Placements", extracted)
         self.assertIn("Mercury", extracted)
 
+    def test_birth_chart_reflection_keeps_context_on_its_continuation_page(self):
+        paragraph = (
+            "Your chart brings several distinct patterns into one practical picture. "
+            "This placement describes how you process choices, protect your energy, and "
+            "recognize what deserves sustained attention. The pattern becomes most useful "
+            "when you notice it in ordinary decisions and respond with steady intention."
+        )
+        payload = {
+            "mode": "FULL",
+            "customer": {
+                "name": "Launch Test",
+                "birth_date": "2005-04-05",
+                "birth_time_local": "18:02",
+                "birth_time_status": "KNOWN",
+                "birth_location_display": "Atlanta, Georgia, United States",
+            },
+            "chart_summary": {
+                "sun": {"sign": "Aries", "house": 7},
+                "moon": {"sign": "Pisces", "house": 6},
+                "rising": {"sign": "Libra", "absolute_longitude": 190.0},
+            },
+            "chart_details": {
+                "placements": {
+                    "sun": {"name": "Sun", "sign": "Aries", "degree": 15.4, "absolute_longitude": 15.4, "house": 7},
+                    "moon": {"name": "Moon", "sign": "Pisces", "degree": 22.1, "absolute_longitude": 352.1, "house": 6},
+                    "mercury": {"name": "Mercury", "sign": "Aries", "degree": 3.2, "absolute_longitude": 3.2, "house": 6},
+                    "venus": {"name": "Venus", "sign": "Aries", "degree": 20.0, "absolute_longitude": 20.0, "house": 7},
+                    "mars": {"name": "Mars", "sign": "Aquarius", "degree": 12.0, "absolute_longitude": 312.0, "house": 5},
+                    "jupiter": {"name": "Jupiter", "sign": "Libra", "degree": 14.0, "absolute_longitude": 194.0, "house": 1},
+                    "saturn": {"name": "Saturn", "sign": "Cancer", "degree": 20.0, "absolute_longitude": 110.0, "house": 10},
+                },
+                "angles": {"ascendant": {"sign": "Libra", "absolute_longitude": 190.0}},
+                "houses": [
+                    {"house": number, "cusp_absolute_longitude": (190.0 + (number - 1) * 30) % 360}
+                    for number in range(1, 13)
+                ],
+                "availability": {"rising": True, "houses": True},
+            },
+            "sections": [{
+                "title": "Birth Chart Snapshot",
+                "status": "INCLUDED",
+                "content": (
+                    paragraph + " " + paragraph
+                    + "\n\nARCHITECT REFLECTION\n"
+                    + "Which pattern feels immediately familiar? Notice where it appears "
+                    "in your ordinary choices, then observe how the other chart pieces work together."
+                ),
+            }],
+        }
+        with tempfile.TemporaryDirectory() as td:
+            out = Path(td) / "balanced-birth-chart.pdf"
+            _, diagnostics = render_pdf(payload, str(out), return_diagnostics=True)
+            rendered = [page.extract_text() or "" for page in PdfReader(out).pages]
+        reflection_page = next(page for page in rendered if "ARCHITECT REFLECTION" in page)
+        self.assertIn("Your chart brings several distinct patterns", reflection_page)
+        self.assertEqual(diagnostics["sparse_pages"], [])
+
     def test_customer_fill_in_lines_survive_and_duplicate_prompt_is_removed(self):
         payload = {
             "customer": {"name": "Elizabeth Hunter"},

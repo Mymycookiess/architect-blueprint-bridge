@@ -861,7 +861,26 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         i = 0
         while i < len(flow):
             current = flow[i]
-            if isinstance(current, Paragraph) and current.style.name in {"heading", "action_heading"} and i + 1 < len(flow):
+            if (
+                title == "Birth Chart Snapshot"
+                and isinstance(current, Paragraph)
+                and current.style.name == "heading"
+                and _heading_key(current.getPlainText()) == "architect reflection"
+                and i > 0
+                and i + 1 < len(flow)
+                and isinstance(flow[i - 1], Paragraph)
+                and flow[i - 1].style.name not in {"heading", "action_heading"}
+                and grouped
+            ):
+                # The fixed birth/chart panels can leave just enough room for
+                # the final interpretation paragraph while pushing its short
+                # reflection onto an accidental continuation page. Move that
+                # context paragraph with the reflection so both pages remain
+                # substantive and the reflection never stands alone.
+                grouped.pop()
+                grouped.append(KeepTogether([flow[i - 1], current, flow[i + 1]]))
+                i += 2
+            elif isinstance(current, Paragraph) and current.style.name in {"heading", "action_heading"} and i + 1 < len(flow):
                 grouped.append(KeepTogether([current, flow[i + 1]]))
                 i += 2
             elif title == "Birth Chart Snapshot" and isinstance(current, Paragraph):
