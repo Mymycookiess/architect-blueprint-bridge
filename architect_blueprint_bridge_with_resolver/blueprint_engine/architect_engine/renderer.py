@@ -701,7 +701,7 @@ def _sparse_page_diagnostics(rendered_pages, chapter_titles):
     accidental = []
     for page_number, page in enumerate(rendered_pages, 1):
         word_count = len(re.findall(r"\b\w+\b", page))
-        if page_number == 1 or word_count >= 40:
+        if page_number == 1 or word_count >= 70:
             continue
         opening_text = _normalized_page_marker("\n".join(page.splitlines()[:14]))
         is_chapter_opening = (
@@ -861,7 +861,47 @@ def render_pdf(payload: dict, out_path: str, return_diagnostics=False):
         i = 0
         while i < len(flow):
             current = flow[i]
+            current_plain = current.getPlainText().strip() if isinstance(current, Paragraph) else ""
+            reflection_match = re.match(
+                r"^architect reflection\b", current_plain, flags=re.IGNORECASE
+            )
+            reflection_is_label = bool(
+                reflection_match
+                and re.sub(r"[^a-z]+", " ", current_plain.lower()).strip() == "architect reflection"
+            )
+            context_index = None
+            removes_page_break = False
+            if i > 0 and isinstance(flow[i - 1], Paragraph):
+                context_index = i - 1
+            elif (
+                i > 1
+                and isinstance(flow[i - 1], PageBreak)
+                and isinstance(flow[i - 2], Paragraph)
+            ):
+                context_index = i - 2
+                removes_page_break = True
+
             if (
+                reflection_match
+                and context_index is not None
+                and grouped
+                and (not reflection_is_label or (i + 1 < len(flow) and isinstance(flow[i + 1], Paragraph)))
+            ):
+                # Reflection labels arrive in three legitimate forms: an
+                # uppercase heading, a title-case standalone paragraph, or
+                # inline at the start of the prompt. Keep the prior context,
+                # label, and prompt as one unit so no chapter can end with a
+                # reflection-only spill page. Remove a balancing PageBreak
+                # when it was inserted directly before the reflection.
+                if removes_page_break:
+                    grouped.pop()
+                grouped.pop()
+                unit = [flow[context_index], current]
+                if reflection_is_label:
+                    unit.append(flow[i + 1])
+                grouped.append(KeepTogether(unit))
+                i += 2 if reflection_is_label else 1
+            elif (
                 title == "Birth Chart Snapshot"
                 and isinstance(current, Paragraph)
                 and re.match(r"^architect reflection\b", current.getPlainText().strip(), flags=re.IGNORECASE)

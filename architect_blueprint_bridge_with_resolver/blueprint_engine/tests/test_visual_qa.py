@@ -209,8 +209,8 @@ class VisualQATests(unittest.TestCase):
                 "status": "INCLUDED",
                 "content": (
                     paragraph + " " + paragraph
-                    + "\n\nArchitect Reflection Which pattern feels immediately familiar? "
-                    + "Notice where it appears "
+                    + "\n\nArchitect Reflection\n\n"
+                    + "Which pattern feels immediately familiar? Notice where it appears "
                     "in your ordinary choices, then observe how the other chart pieces work together."
                 ),
             }],
@@ -361,6 +361,15 @@ class VisualQATests(unittest.TestCase):
             ["Continue Building"],
         )
         self.assertEqual(sparse, [2, 3])
+        self.assertEqual(intentional, [])
+
+    def test_fifty_word_continuation_page_is_blocking(self):
+        continuation = " ".join(["reflection"] * 50)
+        sparse, intentional = _sparse_page_diagnostics(
+            ["THE ARCHITECT BLUEPRINT Prepared for Paul Miller", continuation],
+            [],
+        )
+        self.assertEqual(sparse, [2])
         self.assertEqual(intentional, [])
 
     def test_customer_pdf_embeds_spacing_safe_fonts(self):
